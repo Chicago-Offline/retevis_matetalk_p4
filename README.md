@@ -9,7 +9,7 @@ This repository stores the vendor-supplied programming software and firmware for
 
 ## Related research
 
-There is upstream reverse-engineering work for this platform, including the p64tool project, which documents codeplug structure and related details. The key takeaway from the current issue is that calibration data does not appear to live in the codeplug itself.
+There is upstream reverse-engineering work for this platform, including the [p64tool](https://github.com/oetiker/p64tool) project, which documents codeplug structure and related details. The key takeaway from the current issue is that calibration data does not appear to live in the codeplug itself.
 
 ## Notes
 
