@@ -79,16 +79,121 @@ mnemonic matches the list-type ids documented there (`E4`=contacts,
 | `KL` | 6 | `rKL` (empty on a stock radio) |
 | `ML` | 1 | `rML` quick-text messages |
 
-**Record payloads are the same bytes p64tool documents**, at the same
-record-relative offsets — a `08CHnn` payload is a 72-byte channel record, so
-byte 32 is channel type, 36–39 is RX frequency, and so on per
-`docs/codeplug-format.md`. Spot-checked against this file: frequencies at 36/40
-decode as plain little-endian Hz, analog sub-tone at 58/60 decodes as CTCSS via
-p64tool's `(hi & 0x0F) * 256 + lo` rule, and the bookkeeping u16s at 66–67 and
-70–71 match the record keys.
+### Record payloads vs. the serial regions — verified
 
-⚠️ Read those as **u16 LE**, per p64tool. Reading the bookkeeping fields as
-single bytes happens to work on a 32-channel radio and breaks above 255.
+**Record payloads are the bytes p64tool documents, but the `.dat` offset is not
+the region offset.** The mapping is:
+
+```
+region_offset = dat_offset - 15
+```
+
+Verified against a full OEM CPS serial capture of the same factory-fresh radio
+(`cps/cps_serial_dumps/P4_OEM_BASELINE_CPS_READ_DUMP.txt`): **54 of 61 records
+match byte-for-byte** at that shift.
+
+| Key prefix | Region | Records matching |
+|---|---|---|
+| `01` | `0100` | 6/10 |
+| `02` | `0200` | 8/10 |
+| `03` | `0300` | 0/1 |
+| `04` | `0400` | 2/2 ✅ |
+| `05` | `0500` | 2/2 ✅ |
+| `06` | `0600` | 1/1 ✅ |
+| `07` | `0700` | 2/2 ✅ |
+| `08` | `0800` | **32/32 ✅** |
+| `0A` | `0a00` | 1/1 ✅ |
+
+So a `08CHnn` payload *is* a 72-byte channel record and p64tool's field offsets
+apply within it — byte 32 channel type, 36–39 RX frequency, and so on per
+`docs/codeplug-format.md`.
+
+⚠️ **The `.dat` is NOT a byte-identical dump of the serial regions.** An earlier
+revision of this document claimed it was, on the strength of three spot-checked
+fields that happened to land in the clean regions. Two things break that claim:
+
+**1. CPS-authored metadata the radio never sends.** These records exist in the
+`.dat` with no serial counterpart, or differ from what the radio reports:
+
+| Record | `.dat` | serial | what it is |
+|---|---|---|---|
+| `010004` | `20260812144038` | `20260402153335` | save timestamp |
+| `010005` | `2026-04-20` | `2025/7/14` | date — **and a different format** |
+| `010007` | `P4 V1.5` | all-`FF` | CPS version, stamped on save only |
+| `010008` | `1.0.0.0` + build date | `1.0.0.0` + `FF` | fw version matches; build date is `.dat`-only |
+
+**2. Two single-byte differences that are NOT yet explained:**
+
+```
+020100   .dat 8f …           serial f8 …
+020300   .dat 03 01 01 00    serial 03 01 0a 00
+```
+
+Could be CPS normalising on save, or live radio state differing from saved
+state. **Unresolved — do not guess at these.**
+
+**3. Region `03` length mismatch.** `030000` is 34 bytes in the `.dat`; serial
+region `0300` is only 33 bytes total. The `.dat` record is one byte longer than
+the entire region it supposedly mirrors.
+
+🔴 **Method note.** Deriving this took three attempts: assuming the `.dat` offset
+was the region offset gave 0/61, and assuming −1 also gave 0/61. The `-15` shift
+was only found by *searching* for each record's bytes inside the region rather
+than asserting a mapping. The tell was that the first mismatch landed at offset
+16 in **every single region** — a constant failure offset across all regions
+means the parser is wrong, not the data.
+
+⚠️ Read the bookkeeping fields at 66–67 and 70–71 as **u16 LE**, per p64tool.
+Reading them as single bytes happens to work on a 32-channel radio and breaks
+above 255.
+
+## What the CPS reads that p64tool does not
+
+The same serial capture shows CPS issuing **14 region reads**; p64tool's
+`REGIONS` table covers **9** of them. Region selectors are at `cmd[14..15]` of
+each `0x4D` command.
+
+⚠️ **CPS does not read selectors in numeric order** — it reads `02 00` *before*
+`01 00`. Assuming numeric order makes the first two regions look transposed.
+
+Observed order, with reply sizes in bytes:
+
+```
+CONNECT    → 149
+op=0x00    → 52       ← not read by p64tool (54-byte command)
+02 00      → 2187
+01 00      → 275
+03 00      → 51
+04 00      → 10323
+05 00      → 791
+06 00      → 2899
+07 00      → 1107
+08 00      → 18451
+ff ff      → 619
+32 00      → 51
+0a 00      → 53
+00 01      → 43       ← not read by p64tool
+01 01      → 16531    ← not read by p64tool, 2nd-largest region
+DISCONNECT → 19
+```
+
+Not reading a region is not necessarily a defect — p64tool claims parity for the
+settings it *exposes*, and these may be deliberately ignored. But **`01 01` is
+16,531 bytes and nothing is known about its contents.**
+
+## Protocol confirmation
+
+The same capture confirms p64tool's `PROTOCOL.md` is accurate for this radio:
+
+- Connect frame is **byte-identical** to p64tool's, all 38 bytes:
+  `5F5F 1E00 0023 0026 0200 4011 1200` + 20 × `00` + `FFFF55AA`
+- Reply is 149 bytes, prefix `5F5F 8F00 0026 0023 0200 5011`, exactly as
+  documented
+- UTF-16LE fields in the reply decode as firmware `V1.0.0.0` and serial
+  `428734460100152`
+
+The capture was taken with **CPS v1.5**; p64tool was reverse-engineered from
+v1.4. **The handshake is unchanged between those versions.**
 
 ## Factory baseline contents
 
