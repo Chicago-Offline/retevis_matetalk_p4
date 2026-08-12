@@ -1,21 +1,41 @@
-# P4 CPS `.dat` codeplug format
+# P4 CPS `.dat` save-file format
 
-Decoded from `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat`
-— an OEM CPS v1.5 read of a **factory-fresh, unmodified** radio. That provenance
-is what makes it useful: every value below is a vendor default, not one of our
-edits.
+Notes on the **CPS save file** produced by the OEM programming software — the
+container, not the codeplug byte map.
 
-## 🔴 It is not a binary image
+## 🔴 For the codeplug byte map, use p64tool
 
-Unlike the BF-888 `.img` (see [`bf888-info`](https://github.com/Chicago-Offline/bf888-info)),
-this is **ASCII text with CRLF line endings**, 10,818 bytes, 85 lines. Hex bytes
-are written as space-separated ASCII pairs. Any tooling that assumes a binary
-blob will fail immediately.
+**[`oetiker/p64tool` → `docs/codeplug-format.md`](https://github.com/oetiker/p64tool/blob/main/docs/codeplug-format.md)
+is the authoritative reference** for channel/contact/zone/scan-list/encryption
+record layouts, and it is better sourced than anything derivable from a single
+save file: decompiled vendor CPS cross-checked against live hardware dumps, with
+the dump winning on conflict.
+
+Do not re-derive record offsets here. Look them up there, and send corrections
+upstream.
+
+This document covers only the part p64tool does **not** describe: the ASCII
+wrapper the CPS writes to disk. p64tool reads regions off the serial link, so it
+never sees this file format.
+
+## The save file
+
+Example: `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat`
+— an OEM CPS v1.5 read of a factory-fresh, unmodified radio (10,818 bytes,
+85 lines).
+
+### It is ASCII text, not a binary image
+
+CRLF line endings. Hex bytes are written as space-separated ASCII pairs. Tooling
+that assumes a binary blob fails immediately.
 
 ```
 Model=P4 V1.5
 010001 00016=50 00 34 00 20 00 56 00 31 00 2E 00 32 00 00 00 FF FF ...
 ```
+
+Line 1 is a model/version header. Every other non-blank line is one record.
+Blank lines separate sections and carry no data.
 
 ### Line grammar
 
@@ -23,123 +43,96 @@ Model=P4 V1.5
 <6-char record key> <5-digit offset>=<hex bytes, space separated, trailing space>
 ```
 
-⚠️ **The record key is 6 characters and may contain letters *and spaces*** —
-`010001`, `02CODE`, `02 KEY`, `08CH01`, `KL0001`. A regex like `^([A-Z]+)(\d+)`
-matches only a fraction of the file and silently drops the rest. Anchoring on
-**exactly 6 characters** parses 68/68 records with zero failures.
+⚠️ **The record key is exactly 6 characters and may contain letters *and
+spaces*** — `010001`, `02CODE`, `02 KEY`, `08CH01`, `KL0001`. A regex like
+`^([A-Z]+)(\d+)` matches only a fraction of the file and **silently drops the
+rest**. Anchoring on exactly 6 characters parses 68/68 records with zero
+failures.
 
-⚠️ **The 5-digit field is a byte OFFSET, not a length.** I initially read it as a
-length and got a 25-of-25 "mismatch," which is the tell that the assumption was
-wrong rather than the file. Within a prefix the offsets advance by the previous
-record's byte count — for the channel block, exactly 72 each time.
-
-Blank lines separate sections and carry no data.
-
-## Record prefixes
-
-| Prefix | Records | Contents |
-|---|---|---|
-| `01` | 10 | Model/firmware identity strings, build dates, CPS version |
-| `02` | 10 | Radio-wide settings, incl. `02CODE` and `02 KEY` |
-| `03` | 1 | Network config — contains ASCII `192.168.10.1` |
-| `04` | 2 | `04E401` group, `04E501` group list |
-| `05` | 2 | `05EM01` — ASCII `DigiSys1` |
-| `06` | 1 | 90 bytes, undecoded |
-| `07` | 2 | 68 bytes each, undecoded |
-| `08` | **32** | **Channel records — 72 bytes each** |
-| `0A` | 1 | 33 bytes, undecoded |
-| `KL` | 6 | 4 bytes each, uniform stride |
-| `ML` | 1 | 14 bytes, ASCII `HELLO` in UTF-16LE |
-
-## Channel record (`08CHnn`, 72 bytes)
-
-Factory default is **32 channels**: 16 digital (`DCH 1`–`DCH 16`) and 16 analog
-(`ACH 1`–`ACH 16`), interleaved in blocks.
-
-| Offset | Width | Field | Notes |
-|---|---|---|---|
-| `0x00`–`0x1F` | 32 | Channel name | **UTF-16LE**, `00 00` terminated, `FF` padded |
-| `0x20` | 1 | Mode-ish flag | `0x00` analog / `0x01` digital (see caveat) |
-| `0x22` | 1 | Paired flag | `0x7D` analog / `0xFF` digital |
-| `0x24`–`0x27` | 4 | **RX frequency** | uint32 **little-endian, plain Hz** |
-| `0x28`–`0x2B` | 4 | **TX frequency** | uint32 little-endian, plain Hz |
-| `0x30` | 1 | Digital flag | `0x01` DCH / `0x00` ACH |
-| `0x3A`–`0x3B` | 2 | **CTCSS RX** | uint16, **tenths of Hz** (analog only) |
-| `0x3C`–`0x3D` | 2 | **CTCSS TX** | uint16, tenths of Hz (analog only) |
-| `0x42` | 1 | Index **within** its DCH/ACH block | 1–16, resets per block |
-| `0x46` | 1 | **Absolute channel slot** | 1–32, matches the `08CHnn` key index |
-
-### Frequencies are plain little-endian Hz
-
-No BCD, no scaling factor — the opposite of the BF-888.
+⚠️ **The 5-digit field is a byte OFFSET, not a length.** Reading it as a length
+yields a 25-of-25 "mismatch" — which is the tell that the assumption is wrong,
+not the file. Within a section the offsets advance by the previous record's byte
+count (72 per record across the channel block).
 
 ```python
-rx = struct.unpack_from("<I", rec, 0x24)[0]   # 461112500 -> 461.1125 MHz
+import re
+REC = re.compile(r'^(.{6}) (\d{5})=(.*?)\s*$')   # key, offset, hex payload
 ```
 
-All 32 land exactly on the 12.5 kHz raster (integer multiples, verified), which
-is the cheap sanity check that the scaling is right.
+### Key prefix → p64tool region
 
-### CTCSS is tenths of a Hz
+The 2-character prefix maps onto p64tool's regions, and the trailing "E-number"
+mnemonic matches the list-type ids documented there (`E4`=contacts,
+`E5`=RX-groups, `EM`=emergency, `CH`=channels).
 
-`0x3A` = `670` → **67.0 Hz**. Factory tones across the analog block: 67.0 (×4),
-71.9 (×4), 94.8 (×4), 136.5 (×4). RX and TX tone are identical on every channel.
+| Key prefix | Records | p64tool region |
+|---|---|---|
+| `01` | 10 | `r01` device identity |
+| `02` | 10 | `r02` general settings + encryption keys |
+| `03` | 1 | `r03` DMR network/service |
+| `04` | 2 | `r04` contacts + RX-group lists |
+| `05` | 2 | `r05` emergency systems |
+| `06` | 1 | `r06` scan lists |
+| `07` | 2 | `r07` zones |
+| `08` | **32** | `r08` channel table |
+| `0A` | 1 | `r0A` alerts / man-down |
+| `KL` | 6 | `rKL` (empty on a stock radio) |
+| `ML` | 1 | `rML` quick-text messages |
 
-Digital channels hold `00 C0 80 00` in `0x3A`–`0x3D`, which is **not a tone** —
-it's whatever the digital path uses that region for. Undecoded.
+**Record payloads are the same bytes p64tool documents**, at the same
+record-relative offsets — a `08CHnn` payload is a 72-byte channel record, so
+byte 32 is channel type, 36–39 is RX frequency, and so on per
+`docs/codeplug-format.md`. Spot-checked against this file: frequencies at 36/40
+decode as plain little-endian Hz, analog sub-tone at 58/60 decodes as CTCSS via
+p64tool's `(hi & 0x0F) * 256 + lo` rule, and the bookkeeping u16s at 66–67 and
+70–71 match the record keys.
 
-### Every factory channel is simplex
+⚠️ Read those as **u16 LE**, per p64tool. Reading the bookkeeping fields as
+single bytes happens to work on a 32-channel radio and breaks above 255.
 
-`tx == rx` on all 32. Same finding as the BF-888: no split, no offset, no
-TX-inhibit in the factory config.
+## Factory baseline contents
 
-### Analog vs digital differ in a fixed byte set
+Useful as a known-good starting point, since it is a vendor default rather than
+one of our edits.
 
-Two exact signatures, 16 channels each, no variation within a group:
+- **32 channels**: 16 digital (`DCH 1`–`DCH 16`) + 16 analog (`ACH 1`–`ACH 16`),
+  interleaved in blocks of 8/8/8/8.
+- Each frequency appears **twice** — once analog, once digital.
+- **Every channel is simplex** (`tx == rx`); no splits, no offsets.
+- Analog CTCSS: 67.0, 71.9, 94.8, 136.5 Hz, four channels each, RX tone == TX
+  tone. No DCS anywhere in the factory config.
+- Byte 33 is `0x80` on all 32 channels → power low, TX-admit 0, RX-only clear,
+  bandwidth 0.
+- `03` contains ASCII `192.168.10.1`; `05EM01` is named `DigiSys1`; `ML0001`
+  holds `HELLO`.
 
-```
-DCH:  0x30=01  0x37=FD  0x39=07  0x3E=F0
-ACH:  0x30=00  0x37=40  0x39=00  0x3E=00
-```
-
-⚠️ **Do not read these as four independent booleans.** They are perfectly
-correlated across a 32-channel sample, so this file **cannot** distinguish "the
-mode flag" from "settings that happen to co-vary with mode." Separating them
-needs a config where one is changed alone.
-
-## Frequencies in the factory config
+### Frequencies
 
 `461.1125` `461.1375` `461.1625` `468.5625` `468.6125` `468.6625` `456.3375`
 `456.4375` `459.6025`/`459.6062` `448.1938` `469.3687` `449.3125` `459.1250`
 `444.5500` `457.1750` `442.8750`
 
-Each appears **twice** — once analog, once digital.
+All land exactly on the 12.5 kHz raster — a cheap sanity check that a frequency
+decode is scaled correctly.
 
 ⚠️ **These are vendor defaults, not a licensed channel plan.** They sit in UHF
-business/itinerant territory, and several are **inside the 70 cm amateur band**
-(442.875, 444.550, 448.1938, 449.3125). Transmitting on them requires the
-appropriate authorization; the factory list is not evidence of one. Do not treat
-this block as a legal operating plan.
+business/itinerant territory and several fall **inside the 70 cm amateur band**
+(442.875, 444.550, 448.1938, 449.3125). Transmitting requires the appropriate
+authorization; the factory list is not evidence of one. Do not treat this block
+as a legal operating plan.
 
-## Not decoded
+## Calibration
 
-Honest gaps rather than guesses:
+Per p64tool: `rFF` (~619 B) is ~95 % `0xFF` erased flash on a stock radio and is
+*likely* factory/calibration storage, but nothing interpretable is present.
+`r32` and `rKL` are all-zero. Consistent with this file — the `KL` records are
+zeros.
 
-- `0x2C` — `36` on all 32 channels, and `0x2D` differs (`00` vs `05`) between
-  analog and digital. Purpose unknown.
-- `0x31`–`0x39` beyond the mode signature: power level, bandwidth, squelch,
-  scan, and busy-lock all live somewhere in here and are **not individually
-  resolved**. A factory read cannot separate them — every DCH is identical and
-  every ACH is identical.
-- Prefixes `06`, `07`, `0A`, `KL`, and the `02` block internals.
-- `03` holds `192.168.10.1`; the surrounding structure is unexamined.
-
-**To resolve the rest, the productive move is differential reads:** change one
-setting in the CPS, save, diff. One-byte-at-a-time beats staring at a single
-file.
+So **calibration data does not appear to live in the codeplug**, matching the
+README's existing note.
 
 ## Related
 
+- [`p64tool`](https://github.com/oetiker/p64tool) — **codeplug byte map, protocol, Linux programming tool**
 - [`bf888-info`](https://github.com/Chicago-Offline/bf888-info) — BF-888 image format
-- [`p64tool`](https://github.com/oetiker/p64tool) — upstream P4/P64 codeplug work
 - [`codeplugger`](https://github.com/Chicago-Offline/codeplugger) — codeplug generator
