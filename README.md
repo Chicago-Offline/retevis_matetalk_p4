@@ -1,6 +1,6 @@
 # ReTevis MateTalk P4
 
-This repository stores the vendor-supplied programming software and firmware for the ReTevis MateTalk P4 radio. It is primarily an archive and reference repository rather than a full source tree.
+This repository stores the vendor-supplied programming software and firmware for the ReTevis MateTalk P4 radio and provides reference material about radio use, programming, and reverse engineering.
 
 ## Included files
 
