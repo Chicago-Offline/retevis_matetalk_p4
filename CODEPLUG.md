@@ -226,6 +226,87 @@ business/itinerant territory and several fall **inside the 70 cm amateur band**
 authorization; the factory list is not evidence of one. Do not treat this block
 as a legal operating plan.
 
+## The write path
+
+Captured from an OEM CPS write of a modified codeplug, plus a read-after-write
+of the same radio:
+
+- `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_WRITE_DUMP.txt`
+- `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt`
+
+⚠️ **These two dumps are UTF-16LE with a BOM**; the baseline read dump is UTF-8.
+A parser that assumes UTF-8 returns **zero events** rather than an error, which
+looks like an empty capture. Git also flags them as `Bin` for this reason. Sniff
+the BOM:
+
+```python
+raw = open(path, 'rb').read()
+text = raw.decode('utf-16' if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8', 'replace')
+```
+
+### Opcode `0x44` = write, ACKs with `0x54`
+
+Every write transaction is answered by a **19-byte reply**:
+
+```
+5F 5F 0D 00 00 26 00 23 02 00 54 11 01 00 …
+```
+
+So writes follow `0x44` → `0x54`, mirroring the documented read pattern
+`0x4D` → `0x55`. p64tool's `PROTOCOL.md` lists `0x44` as the write opcode but
+does not document the reply.
+
+### Sequence
+
+```
+CONNECT          → 149
+op=0x00          → 52
+READ  sel=02 00  → 2187      ← one region is READ before any write
+WRITE sel=01 00  (276 B)   → 19
+WRITE sel=02 00  (2188 B)  → 19
+WRITE sel=03 00  (52 B)    → 19
+WRITE sel=04 00  (10324 B) → 19
+WRITE sel=05 00  (792 B)   → 19
+WRITE sel=06 00  (2900 B)  → 19
+WRITE sel=07 00  (1108 B)  → 19
+WRITE sel=08 00  (18452 B) → 19
+WRITE sel=0a 00  (54 B)    → 19
+WRITE sel=00 01  (44 B)    → 19
+WRITE sel=01 01  (16532 B) → 19
+DISCONNECT       → 19
+```
+
+### CPS writes 11 regions but reads 13
+
+**`sel=32 00` and `sel=ff ff` are never written.** That is consistent with
+`ff ff` being the mostly-erased calibration area — the CPS reads it and leaves it
+alone. Useful guard rail for any third-party writer.
+
+### Readback is the written payload plus one leading byte
+
+Diffing every written payload against the corresponding read-after-write payload:
+
+```
+readback_payload == b'\x00' + written_payload
+```
+
+**Confirmed byte-for-byte on all 11 written regions, no exceptions.** The write
+took exactly, and region replies carry a single leading byte ahead of the payload
+proper.
+
+🔑 **This independently corroborates the `−15` shift above.** The `.dat` record
+header is 16 bytes and the region reply has 1 leading byte, so `.dat` offset 16
+lands at region offset 1 — `−15` is `−16 + 1`, not an arbitrary constant. Two
+independent captures agree.
+
+### Consequence: `01 01` and `00 01` hold real codeplug content
+
+Both are **written** by the CPS, so they are not padding or scratch space.
+`01 01` is 16,531 bytes — the second-largest region — and is not in p64tool's
+`REGIONS` table. **A writer that omits these regions produces an incomplete
+codeplug.** Worth resolving before using any third-party write path against a
+radio you care about.
+
 ## Calibration
 
 Per p64tool: `rFF` (~619 B) is ~95 % `0xFF` erased flash on a stock radio and is
@@ -234,7 +315,8 @@ Per p64tool: `rFF` (~619 B) is ~95 % `0xFF` erased flash on a stock radio and is
 zeros.
 
 So **calibration data does not appear to live in the codeplug**, matching the
-README's existing note.
+README's existing note. The write capture supports this independently: the CPS
+**never writes** `ff ff` or `32 00`.
 
 ## Related
 
