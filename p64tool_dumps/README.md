@@ -50,6 +50,23 @@ See its `NOTES.md` — it resolves the factory-serial and 11-vs-12-channel open
 questions, corrects the mislabelled dump above, and identifies three bytes that
 distinguish factory state from CPS-written state.
 
+## `p64tool_blue_20260813/`
+
+The blue radio, carrying the **full `yellow.yml` profile including the ham
+channels** — 11 family channels plus 4 ham analog and 4 ham digital (hotspot).
+DMR ID `3207125`. 53,381 bytes, md5 `15e3d29d9a2c6b2e445e8b8c38702465`,
+`header_ok=yes` on all 13 regions, two independent reads byte-identical,
+`roundtrip` OK.
+
+**All 13 regions are byte-identical to `../cps/cps_serial_dumps/P4_BLUE_HAM_READ_DUMP.txt`**
+— a second independent p64tool-vs-CPS parity check, on a different radio and
+codeplug from the first.
+
+Its `NOTES.md` also carries an important correction: 🔴 **neither the r01 "Serial
+No" nor the CONNECT-reply serial identifies a physical radio.** The first is
+codeplug content that travels with the codeplug; the second is constant across
+every unit observed. Do not infer "same serial, therefore same radio".
+
 ### Region file names do not match the CPS `.dat` record keys
 
 p64tool's `rKL` / `rML` filenames are **not** related to the `KL` / `ML` record
