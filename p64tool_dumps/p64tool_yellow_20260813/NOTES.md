@@ -79,3 +79,51 @@ is normally set from its tail:
 So it is a useful *soft* hint, but it is set by hand, it is not always right,
 and nothing on the wire corroborates it. Confirm against the case sticker before
 recording which unit a dump came from.
+
+## ✅ This radio was the first p64tool write test — and was restored
+
+The write path had never been run against hardware by anyone. It was exercised
+on this radio, then the radio was put back exactly as found.
+
+**Offline pre-flight first.** All 11 write frames captured in
+`../../cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_WRITE_DUMP.txt` reproduce
+byte-for-byte from p64tool's frame builder — header, both length fields, region
+ids, data offset, trailer. The CPS's set is exactly ids 1–8, 10, 256, 257, which
+independently confirms that `r32` and `rFF` should be excluded.
+
+**Test 1 — identity write.** All 11 regions written from a fresh backup of this
+radio. Every region ACKed with the 19-byte `0x54` reply, and an independent
+re-read was byte-identical to the backup. A safe first test: writing a radio's
+own bytes back is a no-op even if it fails halfway.
+
+**Test 2 — control.** Applying an *unmodified* decoded config reported
+`No regions differ from the base - nothing to write`, establishing that change
+detection is sound and any later diff is attributable to the edit alone.
+
+**Test 3 — modifying write.** One channel name changed in the decoded TOML,
+`FAM ALL D` → `P64 WRITE TEST`. Exactly one region (`r08`) was sent. The re-read
+showed:
+
+| check | result |
+|---|---|
+| changed bytes | **19, all inside channel record 0's name field** |
+| rest of record 0 (freqs, flags, bookkeeping) | unchanged |
+| other 255 channel records | identical |
+| all 12 other regions | identical, 0 bytes differing |
+
+**Restored.** Written back from the pre-write backup and re-read: all 13 regions
+byte-identical, md5 `243d6bd67be5e2d7ec5cfb4f0aa46969` — the same as this
+committed dump. The radio still holds DMR ID 439 and the family-only codeplug.
+
+⚠️ **Scope.** Changed content has been exercised on `r08` only; every other
+region has so far been written with identical content. One model, one firmware
+(`P4 V1.2` / `1.0.0.0`).
+
+⚠️ p64tool goes straight from `CONNECT` to the first write, while the CPS sends
+MCU-GET and reads `r02` first — most likely its password check. Skipping it made
+no observable difference across three successful write sessions, but it remains
+a deviation from the vendor's sequence.
+
+⚠️ The default regulation profile is PMR446, which rejects this radio's US
+GMRS/ham frequencies outright. `--country US` selects no profile, so the check is
+skipped rather than bypassed. p64tool ships no US/GMRS profile.

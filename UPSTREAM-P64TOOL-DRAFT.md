@@ -50,8 +50,10 @@ Supporting artifacts, all in this repo:
       a Prolific PL2303G. Untested on Linux and on a CH340. If it is
       macOS/PL2303G-specific, finding 3 is not an upstream issue at all — it
       belongs in our own notes.
-- [ ] **Exercise the write path** on a radio we can afford to recover. Now
-      defensible: `roundtrip` is byte-faithful on all four dumps.
+- [x] **Exercise the write path** on a radio we can afford to recover. Done on
+      `p4_02` (yellow), 2026-08-13: identity write, control, and a one-field
+      modifying write, then restored byte-for-byte. See
+      `p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
 - [x] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`.
       Done — finding 2 is stale, finding 1 is docs-only.
 - [ ] Decide whether to open one combined issue or several.
@@ -222,6 +224,13 @@ Fixed on branch `feat/p4-roundtrip-fidelity`: preserve an already-blank record
 whatever its fill, recognise both fills on decode, keep the stored key slot, and
 only rewrite the password byte when the state actually changes. All four dumps
 now report `Roundtrip OK`, and the upstream test suite still passes.
+
+**Status 2026-08-13:** fixed and now carried on
+`Chicago-Offline/p64tool` branch `feat/p4-support`, together with the connect
+retry (finding 3), a short-read guard (finding 5), the `PROTOCOL.md` refresh
+(finding 1), and a change that stops p64tool writing `r32`/`rFF`. `roundtrip` is
+byte-faithful on all six dumps, and the write path has since been proven on
+hardware.
 
 **Filing note:** this is a fix, not a bug report — send the branch as a PR rather
 than an issue.
