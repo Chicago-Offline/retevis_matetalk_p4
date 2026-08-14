@@ -207,13 +207,14 @@ The same capture confirms p64tool's `PROTOCOL.md` is accurate for this radio:
 - UTF-16LE fields in the reply decode as firmware `V1.0.0.0` and serial
   `428734460100152`
 
-🔴 **That value is NOT a per-unit serial.** Decoding it from all three CPS
-captures in this repo, spanning at least two physical radios, returns
-`428734460100152` every time — it is a constant, most likely a model/firmware
-identifier. The r01 "Serial No" field is no better as a unit ID: it is codeplug
-content, written by the CPS and carried along with the codeplug.
-**Nothing in this protocol distinguishes one P4 from another.** See
-`p64tool_dumps/p64tool_blue_20260813/NOTES.md`.
+🔴 **That value is NOT a per-unit serial — it is a model/firmware constant.**
+Verified by a controlled test: two radios confirmed distinct (`p4_01` and
+`p4_02` — different codeplugs, DMR IDs 3207125 vs 439, 19 vs 11 channels,
+physically swapped between reads) returned **byte-identical 149-byte connect
+replies**. The r01 "Serial No" is no better as a unit id: it is codeplug content
+set by hand, and one radio in the set carries a neighbour's value because its
+codeplug was cloned. **Nothing in this protocol distinguishes one P4 from
+another.** See `p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
 
 The capture was taken with **CPS v1.5**; p64tool was reverse-engineered from
 v1.4. **The handshake is unchanged between those versions.**

@@ -49,28 +49,31 @@ The 11 family channels match `yellow.yml` exactly — 6 analog + 5 digital, no
 
 ## 🔴 Correction: neither "serial" identifies a physical radio
 
-This dump's r01 serial field reads `101677`, the same value as
-`../p64tool_cm-p4-02_family_20260812/`. **That does not make them the same
-radio**, and an earlier reading of this session that inferred so was wrong.
+This dump's r01 serial field reads `101677`, which is **not this radio's**. Blue
+is `p4_01`, case serial ending `1728`; `101677` belongs to `p4_02` (yellow).
+Blue was almost certainly programmed from a codeplug cloned off yellow with the
+Serial No left unchanged.
 
-Two distinct fields, neither of them a unit ID:
+Two distinct fields, neither of them a unit id:
 
 1. **r01 payload offset 209** — the "Serial No" shown in the CPS. It is
-   *codeplug content*: it is written by the CPS and travels with the codeplug,
-   so two radios flashed from the same source share it. Also confirmed by
-   `p4_02_postwrite`, where it was simply overwritten with a different string.
-2. **The CONNECT reply's serial** — `428734460100152`. Decoding it from all
-   three CPS captures in this repo, spanning at least two physical radios, gives
-   **the same value every time**. It is constant, not per-unit.
+   *codeplug content*, set by hand and carried along when a codeplug is cloned,
+   as this radio demonstrates. `p4_02_postwrite` also shows it being overwritten
+   outright.
+2. **The CONNECT reply's serial** — `428734460100152`. A controlled test against
+   `../p64tool_yellow_20260813/` (a confirmed different radio: different
+   codeplug, DMR ID 439 vs 3207125, 11 channels vs 19) returned a
+   **byte-identical 149-byte connect reply**. It is a model/firmware constant.
 
-`../../CODEPLUG.md` describes the connect-reply value as "serial
-`428734460100152`", which reads as a unit serial. It is not one — it is the same
-on every radio observed.
+⚠️ An earlier draft of this file reached the same conclusion from the three OEM
+CPS captures, on the assumption they came from different physical radios. That
+assumption rested on repo labels this session proved unreliable, so the reasoning
+was unsound even though the conclusion held. It is now backed by the two-radio
+test above.
 
 **Consequence: nothing in this protocol distinguishes one P4 from another.**
-Track physical units by case marking or by an external record, never by either
-of these fields. Any past conclusion of the form "same serial, therefore same
-radio" needs re-checking.
+Track physical units by case marking or an external record. The r01 serial is a
+useful soft hint at best — confirm against the case sticker.
 
 ## Factory vs CPS-written state
 

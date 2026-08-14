@@ -62,7 +62,22 @@ DMR ID `3207125`. 53,381 bytes, md5 `15e3d29d9a2c6b2e445e8b8c38702465`,
 — a second independent p64tool-vs-CPS parity check, on a different radio and
 codeplug from the first.
 
-Its `NOTES.md` also carries an important correction: 🔴 **neither the r01 "Serial
+## `p64tool_yellow_20260813/`
+
+The yellow radio (`p4_02`, case serial ending 1677) — **11 family channels only**,
+ham channels stripped, DMR ID `439`. 53,381 bytes, md5
+`243d6bd67be5e2d7ec5cfb4f0aa46969`, `roundtrip` OK. Effectively unchanged from
+`p64tool_p4_02_postwrite_selfid439_20260812` (4 bytes, all in `r01`).
+
+Read back-to-back with the blue radio as a controlled two-radio test. Its
+`NOTES.md` **settles the serial question**: both radios return byte-identical
+149-byte connect replies despite being plainly different units, so the
+connect-reply digit string is a model/firmware constant, not a hardware serial.
+It also documents that blue's codeplug carries yellow's Serial No.
+
+---
+
+Blue's `NOTES.md` also carries an important correction: 🔴 **neither the r01 "Serial
 No" nor the CONNECT-reply serial identifies a physical radio.** The first is
 codeplug content that travels with the codeplug; the second is constant across
 every unit observed. Do not infer "same serial, therefore same radio".
