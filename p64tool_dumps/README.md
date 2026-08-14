@@ -10,7 +10,14 @@ relationship between the two.
 
 ## `p64tool_baseline_factory_20260812/`
 
-Factory-fresh, unmodified radio. Same physical unit and same codeplug state as
+🔴 **Misnamed — this is NOT factory state.** Its `r08` holds the *family*
+codeplug (`FAM ALL D`, `FAM TEAM 1 D`, … `FAM RPTR`), the same channel set as
+the two dumps explicitly labelled family. The "same codeplug state as
+`P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt`" line below is the accurate
+one; "factory-fresh" was wrong and contradicts it. The data is good, the label
+is not. For genuine factory state see `p64tool_purple_20260813/`.
+
+Same physical unit and same codeplug state as
 `../cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt`.
 
 ```
@@ -31,6 +38,17 @@ the vendor CPS pull the same bytes.
 ⚠️ p64tool prints `WARNING — P4 V1.2/1.0.0.0 not in p64tool's validated set`.
 Harmless for reads. **Resolve it before trusting the write path** against this
 firmware.
+
+## `p64tool_purple_20260813/`
+
+**The genuine factory-default codeplug** — 32 channels (`DCH 1`–`DCH 16` +
+`ACH 1`–`ACH 16`), Serial No `123456789`, DMR ID `1`. 53,381 bytes, md5
+`449156af5f89fa21c89af8799a61ffb1`, `header_ok=yes` on all 13 regions, two
+independent reads byte-identical.
+
+See its `NOTES.md` — it resolves the factory-serial and 11-vs-12-channel open
+questions, corrects the mislabelled dump above, and identifies three bytes that
+distinguish factory state from CPS-written state.
 
 ### Region file names do not match the CPS `.dat` record keys
 
@@ -53,9 +71,10 @@ prefixes in a CPS `.dat`. Map by selector, from `manifest.txt`:
 | `rKL.bin` | `00 01` | 43 |
 | `rML.bin` | `01 01` | **16531** |
 
-`rML.bin` (`sel=01 01`) is the second-largest region and is **not documented**
-in p64tool's `REGIONS` table or anywhere else yet. The CPS writes it, so it
-carries real codeplug content. Unmapped — good target for analysis.
+`rML.bin` (`sel=01 01`) is the second-largest region. It holds the **quick-text
+message table** (32 records × 516 bytes at offset 16) — documented upstream in
+p64tool's `docs/codeplug-format.md`; the earlier "not documented anywhere yet"
+note here was stale.
 
 ## Reproducing a read
 

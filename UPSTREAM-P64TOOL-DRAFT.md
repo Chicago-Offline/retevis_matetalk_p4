@@ -1,10 +1,21 @@
 # Draft: upstream findings for `oetiker/p64tool`
 
-**Status: NOT FILED. Holding for more testing.**
+**Status: RE-CHECKED 2026-08-13 against current upstream `main`.**
 
-Three findings from OEM CPS serial captures plus a live p64tool read, all against
-one radio. Each is written as a self-contained issue body so any of them can be
-filed independently once we're confident.
+The "re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`" item on
+the checklist below has now been done, and it changes the picture:
+
+- **Finding 1 (write ACK `0x54`) — still valid, but docs-only.** The write path
+  is implemented upstream and does verify the 19-byte `0x54` ACK; `PROTOCOL.md`
+  still says "Write (not yet implemented)" and does not document the reply.
+- **Finding 2 (missing regions) — STALE, do not file.** Upstream `REGIONS` now
+  covers all 13 regions. `00 01` and `01 01` are present as `rKL` and `rML`
+  (`rML` = quick-text messages, 32×516 @16), and the 54-byte `op=0x00` frame we
+  saw is upstream's MCU-GET (`0x32`) identity probe. Nothing is missing.
+- **Finding 3 (0-byte first connect) — still valid and now reproduced on a third
+  radio.** See below.
+- **NEW, and the important one: `roundtrip` failed on every P4 dump.** Written
+  up at the end. Already fixed on branch `feat/p4-roundtrip-fidelity`.
 
 Radio under test:
 
@@ -15,12 +26,9 @@ Built    : 2025-06-23
 Model    : P4 V1.2
 ```
 
-⚠️ **Single radio, single firmware.** Everything below is `n=1` on hardware
-p64tool explicitly flags as outside its validated set
-(`WARNING — P4 V1.2/1.0.0.0 not in p64tool's validated set`). That's the main
-reason to hold: we cannot currently distinguish "p64tool's docs are incomplete"
-from "this firmware behaves differently than the V1.4 CPS it was reverse
-engineered against."
+⚠️ The original `n=1` caveat has partly lifted: findings now rest on **four
+dumps across three physical radios**, in both factory and CPS-written codeplug
+states. Still one firmware (`1.0.0.0`).
 
 Supporting artifacts, all in this repo:
 
@@ -28,25 +36,25 @@ Supporting artifacts, all in this repo:
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_WRITE_DUMP.txt` — CPS write
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt` — readback
 - `p64tool_dumps/p64tool_baseline_factory_20260812/` — live p64tool read
+  (🔴 misnamed: this is family state, not factory)
+- `p64tool_dumps/p64tool_purple_20260813/` — live p64tool read, genuine factory
+  default
 
 ---
 
 ## Before filing
 
-- [ ] **Second radio.** Ideally a different firmware, at minimum a second unit.
-      All three findings are `n=1`.
+- [x] **Second radio.** Now four dumps across three physical units, in both
+      factory and CPS-written codeplug states.
 - [ ] **Confirm finding 3 is not our cable/driver.** It reproduced on macOS with
       a Prolific PL2303G. Untested on Linux and on a CH340. If it is
       macOS/PL2303G-specific, finding 3 is not an upstream issue at all — it
       belongs in our own notes.
-- [ ] **Exercise the write path** on a radio we can afford to recover, to check
-      whether the missing regions actually matter in practice. Finding 2's
-      severity is currently inferred, not observed.
-- [ ] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main` and
-      confirm these gaps still exist and weren't fixed since our clone.
-- [ ] Decide whether to open one combined issue or three. Finding 1 is a clean
-      doc patch; finding 2 is a correctness question; finding 3 may be a
-      local quirk.
+- [ ] **Exercise the write path** on a radio we can afford to recover. Now
+      defensible: `roundtrip` is byte-faithful on all four dumps.
+- [x] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`.
+      Done — finding 2 is stale, finding 1 is docs-only.
+- [ ] Decide whether to open one combined issue or several.
 
 ---
 
@@ -96,9 +104,17 @@ ahead of the payload proper.
 
 ---
 
-## Finding 2 — `REGIONS` omits 5 regions the CPS touches, 2 of which it writes
+## Finding 2 — ~~`REGIONS` omits 5 regions the CPS touches~~ STALE, DO NOT FILE
 
-**Confidence: high on the observation, unverified on the consequence.**
+**Re-checked 2026-08-13 against upstream `main`: the gap does not exist.**
+
+Upstream `REGIONS` covers all 13 regions the CPS reads. `00 01` and `01 01` are
+there as `rKL` and `rML`, both in the write order too, and `rML` is documented
+as the quick-text message table (32 × 516 @16). The 54-byte `op=0x00` preamble
+is upstream's MCU-GET (`0x32`) identity probe, also implemented.
+
+Our clone predated that work. The observation below is retained only as a record
+of region sizes; **the conclusion drawn from it was wrong.**
 
 The CPS reads 13 regions and writes 11. p64tool's `REGIONS` table covers 9 reads.
 Not present in `REGIONS`:
@@ -130,7 +146,10 @@ matches p64tool's existing note.
 
 ## Finding 3 — first connect after idle returns 0 bytes
 
-**Confidence: LOWEST of the three. Do not file until the checklist above is done.**
+**Confidence: raised. Reproduced on a third radio on 2026-08-13**, where it was
+strikingly consistent: `info`, `read`, and a verification `read` each failed on
+attempt 1 with 0 bytes and succeeded on attempt 2. Still macOS/PL2303G only, so
+the cable/driver question below is still open.
 
 The first `CONNECT` after the port has been idle returns 0 bytes. An immediate
 retry succeeds, and the link is then stable across many operations.
@@ -172,9 +191,63 @@ in an upstream issue.
 
 ---
 
-## Related local gotcha — not upstream's problem
+## Finding 4 — `roundtrip` was not byte-faithful on any P4 codeplug — FIXED
 
-Recording it here so it doesn't get mistaken for a p64tool bug later.
+**Confidence: high. Reproduced on four dumps, three radios, then fixed and
+re-verified.** This is the one that actually mattered.
+
+p64tool's `roundtrip` self-test (decode → re-apply → diff) is the repo's own
+stated precondition for trusting the write path. It **failed on every P4 dump in
+this repo**: 171 differing bytes, at identical offsets across all three, in
+regions `r02`, `r08` and `rML`.
+
+Four independent decode/apply asymmetries, none P4-specific in principle — they
+were simply never exercised by the P64 V1.1 sample the field map came from:
+
+1. **Blank-record fill is not a constant** (124 of the 171 bytes). p64tool
+   assumed unused `rML` message slots are `0x00`-filled. That holds on a
+   factory-fresh radio and is **false on every radio the OEM CPS has written**,
+   where they are `0xFF`. On those, decode emitted 32 empty quick-text messages
+   and re-apply stamped a record number into 31 slots that should not have been
+   touched.
+2. **Empty names.** `set_name` wrote a `0x0000` terminator into a name field the
+   radio leaves entirely `0xFF`-filled. Programmed-but-unnamed channels are
+   common here, so this fired repeatedly.
+3. **Channel encryption key slot.** `rec[62]` was zeroed whenever the enable bit
+   was clear, discarding the radio's retained last-selected key.
+4. **Password sentinel `r02[24]`.** Rewritten unconditionally to `0xF8`, which
+   is the factory value; a CPS-written radio holds `0x8F`. Both mean "disabled".
+
+Fixed on branch `feat/p4-roundtrip-fidelity`: preserve an already-blank record
+whatever its fill, recognise both fills on decode, keep the stored key slot, and
+only rewrite the password byte when the state actually changes. All four dumps
+now report `Roundtrip OK`, and the upstream test suite still passes.
+
+**Filing note:** this is a fix, not a bug report — send the branch as a PR rather
+than an issue.
+
+---
+
+## Finding 5 — a short region read is written to disk with only a warning
+
+**Confidence: medium. Observed once, mechanism clear.**
+
+One read during the 2026-08-13 session returned `r08` as **5,869 bytes instead
+of 18,451** and `rFF` as **1 byte**. p64tool flagged it (`header_ok=NO` in
+`manifest.txt`, plus a closing `WARNING:` line) but still wrote the dump
+directory and a truncated `codeplug_raw.bin`.
+
+That is a hazard rather than a cosmetic issue: a truncated dump is a valid input
+to `--from-dump`, so a short read can silently become the base image for a
+write. `read_response` stops on a 250 ms inter-byte gap, so a mid-transfer pause
+ends the region early.
+
+Suggested: make a short region a hard error by default, or refuse to load a dump
+whose manifest has any `header_ok=NO`.
+
+---
+
+## Related local gotcha — not upstream's problem
 
 On macOS the Prolific PL2303G DriverKit extension must be **enabled** under
 System Settings → General → Login Items & Extensions → **Driver Extensions**. A

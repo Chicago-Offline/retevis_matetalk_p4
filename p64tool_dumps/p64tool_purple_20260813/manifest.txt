@@ -1,0 +1,15 @@
+# p64tool codeplug dump
+# region  selector  requested  received  header_ok  offset_in_combined
+r01     01 00           275       275  yes        0
+r02     02 00          2187      2187  yes        275
+r03     03 00            51        51  yes        2462
+r04     04 00         10323     10323  yes        2513
+r05     05 00           791       791  yes        12836
+r06     06 00          2899      2899  yes        13627
+r07     07 00          1107      1107  yes        16526
+r08     08 00         18451     18451  yes        17633
+rFF     FF FF           619       619  yes        36084
+r32     32 00            51        51  yes        36703
+r0A     0A 00            53        53  yes        36754
+rKL     00 01            43        43  yes        36807
+rML     01 01         16531     16531  yes        36850

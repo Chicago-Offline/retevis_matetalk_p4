@@ -122,15 +122,27 @@ fields that happened to land in the clean regions. Two things break that claim:
 | `010007` | `P4 V1.5` | all-`FF` | CPS version, stamped on save only |
 | `010008` | `1.0.0.0` + build date | `1.0.0.0` + `FF` | fw version matches; build date is `.dat`-only |
 
-**2. Two single-byte differences that are NOT yet explained:**
+**2. Two single-byte differences — RESOLVED: both are CPS-authored state.**
 
 ```
 020100   .dat 8f …           serial f8 …
 020300   .dat 03 01 01 00    serial 03 01 0a 00
 ```
 
-Could be CPS normalising on save, or live radio state differing from saved
-state. **Unresolved — do not guess at these.**
+These are not two views of one state. The `.dat` carries CPS-normalised values;
+the serial baseline capture caught the radio in **factory** state. A
+factory-default radio
+(`p64tool_dumps/p64tool_purple_20260813/`) reads `f8` and `03 01 0a 00`; every
+radio the OEM CPS has written reads `8f` and `03 01 01 00`. Extracting region
+`02` straight out of `P4_OEM_BASELINE_CPS_READ_DUMP.txt` confirms the factory
+side at `f8`.
+
+Via the `-15` shift, `020100` is `r02` payload[9] (`WW02[24]`, the password
+sentinel — both values mean "disabled") and `020300` is payload[69..73].
+
+A third item splits the same way: **`rML` blank message slots are `0x00` on a
+factory radio and `0xFF` after a CPS write.** That one broke p64tool's write
+path — see `p64tool_dumps/p64tool_purple_20260813/NOTES.md`.
 
 **3. Region `03` length mismatch.** `030000` is 34 bytes in the `.dat`; serial
 region `0300` is only 33 bytes total. The `.dat` record is one byte longer than
@@ -178,8 +190,11 @@ DISCONNECT → 19
 ```
 
 Not reading a region is not necessarily a defect — p64tool claims parity for the
-settings it *exposes*, and these may be deliberately ignored. But **`01 01` is
-16,531 bytes and nothing is known about its contents.**
+settings it *exposes*, and these may be deliberately ignored. ~~But **`01 01` is
+16,531 bytes and nothing is known about its contents.**~~ **Stale:** current
+upstream `main` reads all 13 regions, including `00 01` and `01 01`, and the
+54-byte `op=0x00` frame is its MCU-GET (`0x32`) identity probe. `01 01` is the
+quick-text message table.
 
 ## Protocol confirmation
 
