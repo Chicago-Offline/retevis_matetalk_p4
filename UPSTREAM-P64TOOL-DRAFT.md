@@ -16,6 +16,11 @@ the checklist below has now been done, and it changes the picture:
   radio.** See below.
 - **NEW, and the important one: `roundtrip` failed on every P4 dump.** Written
   up at the end. Already fixed on branch `feat/p4-roundtrip-fidelity`.
+- **NEW 2026-08-13, findings 6 and 7**, from the first OEM CPS export taken of a
+  radio we also hold a p64tool dump of. Finding 6 is a probable wrong bitmask on
+  channel power — p64tool reads Low where the CPS shows High — and needs one
+  more CPS experiment before filing. Finding 7 is a docs-only mislabel of the
+  region-size column.
 
 Radio under test:
 
@@ -39,6 +44,11 @@ Supporting artifacts, all in this repo:
   (🔴 misnamed: this is family state, not factory)
 - `p64tool_dumps/p64tool_purple_20260813/` — live p64tool read, genuine factory
   default
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat` — OEM
+  CPS export of **that same radio**, three hours later, with the operator's CPS
+  screens transcribed alongside. This is what makes findings 6 and 7 possible:
+  it is the only place we can see a decoded field and the radio's bytes side by
+  side and check that p64tool agrees with the vendor.
 
 ---
 
@@ -56,6 +66,10 @@ Supporting artifacts, all in this repo:
       `p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
 - [x] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`.
       Done — finding 2 is stale, finding 1 is docs-only.
+- [ ] **Settle finding 6 before filing it.** Set one channel to Low power in the
+      CPS, save, and diff the `.dat` against the factory save. Confirms the
+      `0xC0` mask or relocates the field; either way it turns an inference into
+      an observation.
 - [ ] Decide whether to open one combined issue or several.
 
 ---
@@ -253,6 +267,73 @@ ends the region early.
 
 Suggested: make a short region a hard error by default, or refuse to load a dump
 whose manifest has any `header_ok=NO`.
+
+---
+
+## Finding 6 — channel power decodes as Low on a codeplug the CPS shows as High
+
+**Confidence: medium-high on the defect, medium on the proposed fix.** New
+2026-08-13, from the first OEM CPS export taken of a radio we also have a
+p64tool dump of.
+
+`docs/codeplug-format.md` maps channel record byte 33 as:
+
+> `&0x03` power (0=low, 2=high); `&0x30>>4` TX-admit criteria; `&0x40` RX-only.
+> **A** also: `&0x0C` bandwidth/spacing
+
+On the factory-default codeplug, byte 33 is `0x80` on all 32 channels, so
+`&0x03` is `0` and p64tool reports **Low**. The OEM CPS shows **High** for all
+32 — verified channel by channel against
+`cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat` and the
+matching dump `p64tool_dumps/p64tool_purple_20260813/`, which are the same radio
+read three hours apart.
+
+Proposed reading: **power is `(b33 & 0xC0) >> 6`**, not `b33 & 0x03`. That gives
+`2` = high, which is the value the doc already assigns to high — the value
+semantics look right and only the mask looks wrong.
+
+Supporting evidence across six dumps and three `.dat` saves in this repo:
+
+- `b33 & 0x03` is **never** set. Not on any channel, in any dump, in any state.
+- The only values observed are `0x80` (all channels, five dumps) and `0x88`
+  (10 of blue's 19 channels; the extra `0x08` sits in the documented analog
+  `&0x0C` bandwidth field, so it is accounted for).
+- The neighbouring fields in the same byte check out against the CPS, which is
+  what makes the offset itself trustworthy: `&0x40` RX-only is clear and the CPS
+  shows RX Only = No on all 32.
+
+⚠️ **What we cannot yet rule out.** Every channel we have is High power, so the
+evidence distinguishes "power lives at `0xC0`" from "`0x80` is an unrelated
+always-set flag and power is elsewhere" only by inference. Before filing, set one
+channel to Low in the CPS, save, and diff the `.dat` — that is a few minutes of
+work and it either confirms the mask or relocates the field.
+
+Impact is on the write path only; reads round-trip byte 33 verbatim either way,
+which is why `roundtrip` never caught it.
+
+---
+
+## Finding 7 — the region table's `Size` column is frame length, not payload length
+
+**Confidence: high. Docs-only, trivial, but it propagates.**
+
+`docs/codeplug-format.md` says of the region table: *"'Size' is the payload
+length `N`"*. The listed values are frame lengths. Measured on all 13 purple
+regions:
+
+```
+file_size == 18 + payload_len          # 14-byte header + payload + 4-byte trailer
+payload_len == u16le(rNN.bin[12..14])  # the header's own length field
+```
+
+So `r03` is listed as 51 and its payload is 33; `r08` is listed as 18,451 and its
+payload is 18,433. The distinction matters as soon as anything is written to a
+region boundary — we hit it decoding a CPS `.dat` record that turned out to
+overrun the `r03` payload by two bytes and match anyway, because the frame
+trailer begins `FF FF` and is indistinguishable from padding.
+
+Suggested: relabel the column `Frame` and add a `Payload` column, or state the
+`18 + N` relationship next to the table.
 
 ---
 

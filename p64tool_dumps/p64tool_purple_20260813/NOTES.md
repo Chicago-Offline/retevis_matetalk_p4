@@ -30,6 +30,13 @@ DCH 1..DCH 8, ACH 1..ACH 16, DCH 9..DCH 16
 Serial No `123456789`, DMR ID `1`, 2 zones, 1 contact, 1 scan list, 1 quick-text
 message (`HELLO`).
 
+✅ An OEM CPS export of this same radio,
+`../../cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat`,
+confirms the decode channel by channel — all 32 agree on name, RX, TX, CTCSS,
+colour code, contact and RX-group. 62 of its 68 records are byte-identical to
+this dump; the 6 that differ are four CPS-authored metadata fields plus the two
+normalised bytes below. See `../../CODEPLUG.md` for the full comparison.
+
 ## Resolves: `123456789` is the factory-default Serial No
 
 `../p64tool_p4_02_postwrite_selfid439_20260812/NOTES.md` left this open:
@@ -98,6 +105,27 @@ The raw CPS baseline capture agrees with the factory column: extracting region
 `02` straight out of `P4_OEM_BASELINE_CPS_READ_DUMP.txt` gives payload[9] =
 `0xF8`.
 
+### Follow-up: the CPS rewrites two of them on *read*, not on write
+
+This radio was later read by the OEM CPS as well, three hours after the p64tool
+read and with no write in between:
+`../../cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat`.
+
+p64tool got `f8` / `0a` off the radio. The CPS, reading the same radio the same
+evening, put `8f` / `01` in its save file. So the substitution is **the CPS
+normalising a codeplug as it ingests it** — the radio was in factory state for
+both reads.
+
+That tightens the table above rather than contradicting it. The radio-side split
+is downstream of the same behaviour: because the CPS normalises on read, any
+codeplug it later writes back carries the normalised bytes, so a CPS-written
+radio reads `8f` / `01` from then on. Before, this rested on comparing different
+radios; now it is one radio, two readers.
+
+The `rML` fill cannot be checked this way — the `.dat` stores only the populated
+message record, never the 31 blank slots — but it fits the same pattern, with
+the fill byte chosen by the CPS at write time.
+
 **This resolves both "unexplained" bytes in `../../CODEPLUG.md`.** That document
 recorded them as an unresolved `.dat` vs. serial disagreement:
 
@@ -131,6 +159,21 @@ Fixed upstream in `oetiker/p64tool` branch `feat/p4-roundtrip-fidelity`, along
 with three smaller asymmetries (empty-name terminator, dropped encryption key
 slot, and the `r02[24]` sentinel above). All four dumps now report
 `Roundtrip OK`, including this one.
+
+## Second p64tool issue: channel power decodes as Low, the CPS says High
+
+The OEM CPS export of this radio shows **Power = High** on all 32 channels.
+Channel byte 33 is `0x80` on all 32, and p64tool's `&0x03` power mask reads `0`
+from that — **Low**.
+
+`&0x03` is never set on any channel in any dump in this repo. Reading power as
+`(b33 & 0xC0) >> 6` gives `2`, the value p64tool already documents as "high", so
+the values look right and the mask looks wrong. Full evidence and the caveat
+(every sample is a High-power channel, so it is not yet decisive) in
+`../../CODEPLUG.md`.
+
+Reads are unaffected — byte 33 round-trips verbatim either way. Writing power
+through p64tool would not.
 
 ## Reproducing
 

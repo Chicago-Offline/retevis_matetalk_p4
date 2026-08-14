@@ -50,6 +50,21 @@ See its `NOTES.md` — it resolves the factory-serial and 11-vs-12-channel open
 questions, corrects the mislabelled dump above, and identifies three bytes that
 distinguish factory state from CPS-written state.
 
+**Also read by the OEM CPS**, three hours after this dump and with no write in
+between:
+`../cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat`.
+62 of its 68 records are byte-identical to this dump, and all 32 channels decode
+to the same values the CPS displays. It is the repo's only paired
+vendor-vs-p64tool view of one radio, and it produced two p64tool findings — see
+`../UPSTREAM-P64TOOL-DRAFT.md`.
+
+⚠️ **The `.dat` naming clash is a trap.** The mislabelled *dump* directory above
+is `p64tool_baseline_factory_20260812`; the *CPS save*
+`retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat` is a different
+artifact and its "factory" label is **correct** — it is byte-identical to the
+0813 purple save apart from the save timestamp. Only the p64tool directory is
+misnamed.
+
 ## `p64tool_blue_20260813/`
 
 The blue radio, carrying the **full `yellow.yml` profile including the ham

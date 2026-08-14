@@ -20,9 +20,24 @@ never sees this file format.
 
 ## The save file
 
-Example: `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat`
-— an OEM CPS v1.5 read of a factory-fresh, unmodified radio (10,818 bytes,
-85 lines).
+Two OEM CPS v1.5 reads of a factory-fresh, unmodified radio, 10,818 bytes and
+85 lines each:
+
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat`
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat` —
+  read from the **purple** radio, the unit `p64tool_dumps/p64tool_purple_20260813/`
+  established as genuinely factory-default.
+
+✅ **The two saves are byte-identical across all 68 records.** The only
+difference in the whole file is `010004`, the save timestamp. This matters
+because `p64tool_dumps/p64tool_baseline_factory_20260812/` — the *p64tool* dump
+with a similar name — turned out to be mislabelled family state, which cast
+doubt on everything else dated 0812. The `.dat` survives that re-check: its
+"factory-fresh" label is correct.
+
+It also means the factory codeplug is reproducible unit-to-unit. Serial No
+`123456789` and DMR ID `1` are vendor defaults, not per-unit values, so a
+factory read of any P4 should produce this same content.
 
 ### It is ASCII text, not a binary image
 
@@ -88,25 +103,46 @@ the region offset.** The mapping is:
 region_offset = dat_offset - 15
 ```
 
-Verified against a full OEM CPS serial capture of the same factory-fresh radio
-(`cps/cps_serial_dumps/P4_OEM_BASELINE_CPS_READ_DUMP.txt`): **54 of 61 records
-match byte-for-byte** at that shift.
+Verified twice. The stronger check is **same radio, same day, two readers**: the
+0813 `.dat` (OEM CPS) against `p64tool_dumps/p64tool_purple_20260813/` (p64tool
+serial read). All 68 records are comparable because that dump has every region,
+and **62 of 68 match byte-for-byte**.
 
 | Key prefix | Region | Records matching |
 |---|---|---|
-| `01` | `0100` | 6/10 |
-| `02` | `0200` | 8/10 |
-| `03` | `0300` | 0/1 |
-| `04` | `0400` | 2/2 ✅ |
-| `05` | `0500` | 2/2 ✅ |
-| `06` | `0600` | 1/1 ✅ |
-| `07` | `0700` | 2/2 ✅ |
-| `08` | `0800` | **32/32 ✅** |
-| `0A` | `0a00` | 1/1 ✅ |
+| `01` | `r01` | 6/10 |
+| `02` | `r02` | 8/10 |
+| `03` | `r03` | 1/1 ✅ |
+| `04` | `r04` | 2/2 ✅ |
+| `05` | `r05` | 2/2 ✅ |
+| `06` | `r06` | 1/1 ✅ |
+| `07` | `r07` | 2/2 ✅ |
+| `08` | `r08` | **32/32 ✅** |
+| `0A` | `r0A` | 1/1 ✅ |
+| `KL` | `rKL` | 6/6 ✅ |
+| `ML` | `rML` | 1/1 ✅ |
+
+The earlier check — the 0812 `.dat` against
+`cps/cps_serial_dumps/P4_OEM_BASELINE_CPS_READ_DUMP.txt`, a *different* radio —
+gave 54/61 and is superseded. Every one of the 6 remaining mismatches is
+accounted for below; none is an unexplained decode failure.
 
 So a `08CHnn` payload *is* a 72-byte channel record and p64tool's field offsets
 apply within it — byte 32 channel type, 36–39 RX frequency, and so on per
 `docs/codeplug-format.md`.
+
+⚠️ **To compare a `.dat` record against a p64tool `rNN.bin` file, the shift is
+`-1`, not `-15`.** Both are true and it is easy to lose an afternoon here:
+
+```
+rNN.bin       = 14-byte frame header ++ payload ++ 4-byte trailer (FF FF 55 AA)
+payload_offset = dat_offset - 15
+file_offset    = dat_offset -  1        # what you index in rNN.bin
+```
+
+p64tool stores the **full frame**, not the payload. Using `-15` against the file
+reproduces the classic symptom — every region mismatching from its very first
+byte — which reads like a broken shift and is really a 14-byte header.
 
 ⚠️ **The `.dat` is NOT a byte-identical dump of the serial regions.** An earlier
 revision of this document claimed it was, on the strength of three spot-checked
@@ -122,31 +158,65 @@ fields that happened to land in the clean regions. Two things break that claim:
 | `010007` | `P4 V1.5` | all-`FF` | CPS version, stamped on save only |
 | `010008` | `1.0.0.0` + build date | `1.0.0.0` + `FF` | fw version matches; build date is `.dat`-only |
 
-**2. Two single-byte differences — RESOLVED: both are CPS-authored state.**
+**2. Two single-byte differences — the CPS normalises them on read.**
 
 ```
-020100   .dat 8f …           serial f8 …
-020300   .dat 03 01 01 00    serial 03 01 0a 00
+020100   .dat 8f …           radio f8 …
+020300   .dat 03 01 01 00    radio 03 01 0a 00
 ```
-
-These are not two views of one state. The `.dat` carries CPS-normalised values;
-the serial baseline capture caught the radio in **factory** state. A
-factory-default radio
-(`p64tool_dumps/p64tool_purple_20260813/`) reads `f8` and `03 01 0a 00`; every
-radio the OEM CPS has written reads `8f` and `03 01 01 00`. Extracting region
-`02` straight out of `P4_OEM_BASELINE_CPS_READ_DUMP.txt` confirms the factory
-side at `f8`.
 
 Via the `-15` shift, `020100` is `r02` payload[9] (`WW02[24]`, the password
-sentinel — both values mean "disabled") and `020300` is payload[69..73].
+sentinel — both values mean "disabled") and `020300` is payload[69..73], whose
+differing byte is payload[71].
+
+🔑 **The 0813 save pins the mechanism down, because it is the same radio.**
+purple was read by p64tool at 19:21 and by the OEM CPS at 22:43 on 2026-08-13,
+with no write in between. p64tool read `f8` / `0a`; the CPS wrote `8f` / `01`
+into its `.dat`. Nothing about the radio changed, so **the substitution happens
+inside the CPS when it ingests a codeplug**, not on the radio.
+
+That is a correction of emphasis, not of fact. The earlier reading — "the `.dat`
+carries CPS-normalised values, the serial capture caught factory state" — was
+right, but it was an inference from two different radios. It is now directly
+observed, and it explains the radio-side split as a consequence: because the
+CPS normalises on read, whatever it later writes back carries the normalised
+values, so any radio it has written reads `8f` / `01` from then on.
+
+| dump | `r02` payload[9] | payload[71] |
+|---|---|---|
+| `p64tool_purple_20260813` (factory) | `0xf8` | `0x0a` |
+| all five other dumps (CPS-written) | `0x8f` | `0x01` |
 
 A third item splits the same way: **`rML` blank message slots are `0x00` on a
-factory radio and `0xFF` after a CPS write.** That one broke p64tool's write
-path — see `p64tool_dumps/p64tool_purple_20260813/NOTES.md`.
+factory radio and `0xFF` after a CPS write** — confirmed on the same six dumps,
+15,996 fill bytes each. That one broke p64tool's write path — see
+`p64tool_dumps/p64tool_purple_20260813/NOTES.md`.
 
-**3. Region `03` length mismatch.** `030000` is 34 bytes in the `.dat`; serial
-region `0300` is only 33 bytes total. The `.dat` record is one byte longer than
-the entire region it supposedly mirrors.
+Note the `.dat` cannot show the `rML` fill: it stores only the one populated
+message record (`ML0001`), never the 31 blank slots. The fill byte is chosen by
+the CPS at write time, which is consistent with the same normalise-on-ingest
+behaviour.
+
+**3. Region `03` length mismatch — explained: the record overruns the payload.**
+`030000` is 34 bytes in the `.dat`, and the `r03` **payload is 33 bytes**. Since
+the record starts at payload offset 1, its last two bytes land past the payload
+end, in the frame trailer:
+
+```
+r03.bin   51 bytes = 14 header + 33 payload + 4 trailer (ff ff 55 aa)
+030000    occupies file bytes 15..48 — payload[1..32] plus trailer[0..1]
+```
+
+It compares clean only because the trailer begins `ff ff`, indistinguishable
+from the `0xFF` padding the record would otherwise carry. The CPS evidently
+emits a fixed-size record here rather than a payload-bounded one. Harmless for
+reading; **a writer that echoes 34 bytes back into a 33-byte region is not.**
+
+⚠️ The 33 comes from the frame header, not from p64tool's docs. Its region table
+labels the `Size` column "the payload length `N`", but the values listed are
+**frame** lengths — `r03` is 51 there. Across all 13 purple regions,
+`file_size == 18 + payload_len`, with `payload_len` read from `rNN.bin[12..14]`
+as u16 LE. Trust the header field.
 
 🔴 **Method note.** Deriving this took three attempts: assuming the `.dat` offset
 was the region offset gave 0/61, and assuming −1 also gave 0/61. The `-15` shift
@@ -224,31 +294,130 @@ v1.4. **The handshake is unchanged between those versions.**
 Useful as a known-good starting point, since it is a vendor default rather than
 one of our edits.
 
+✅ **Decoded from the bytes and cross-checked against the operator's CPS screens,
+channel by channel: all 32 agree** — name, RX, TX, CTCSS, colour code, contact,
+RX-group and scan-list assignment. The field map below is therefore confirmed
+end-to-end on this codeplug, not just plausible.
+
 - **32 channels**: 16 digital (`DCH 1`–`DCH 16`) + 16 analog (`ACH 1`–`ACH 16`),
-  interleaved in blocks of 8/8/8/8.
-- Each frequency appears **twice** — once analog, once digital.
+  interleaved in blocks of 8/8/8/8 — records 1–8 `DCH 1`–`8`, 9–24 `ACH 1`–`16`,
+  25–32 `DCH 9`–`16`.
 - **Every channel is simplex** (`tx == rx`); no splits, no offsets.
+- Each frequency appears **twice**, once analog and once digital — except pair 9,
+  where analog is `459.602500` and digital is `459.606250`, 3.75 kHz apart. It
+  is the one asymmetry in the table and it is in the vendor default, not a typo
+  in transcription: both the `.dat` and the p64tool dump carry it.
 - Analog CTCSS: 67.0, 71.9, 94.8, 136.5 Hz, four channels each, RX tone == TX
   tone. No DCS anywhere in the factory config.
-- Byte 33 is `0x80` on all 32 channels → power low, TX-admit 0, RX-only clear,
-  bandwidth 0.
+- All digital channels: colour code 1, TS1, TX contact `Group 1`, RX group
+  `GroupList 1`.
+- No channel is assigned a scan list (index 0), and none is RX-only.
+- TOT byte 44 is `0x24` (36) on all 32.
 - `03` contains ASCII `192.168.10.1`; `05EM01` is named `DigiSys1`; `ML0001`
-  holds `HELLO`.
+  holds `HELLO` (record 1, length 5).
+
+### 🔴 Byte 33 is `0x80` and the CPS shows **High** power — p64tool decodes Low
+
+p64tool's `docs/codeplug-format.md` maps channel byte 33 as `&0x03` power,
+`0=low, 2=high`. On this codeplug `&0x03` is `0` for every channel, which decodes
+as **Low** — but the OEM CPS displays **High** for all 32.
+
+The unaccounted bit is `0x80`. Reading power as `(b33 & 0xC0) >> 6` yields `2`,
+which is exactly the "high" value p64tool already documents, so the *values* look
+right and the *mask* looks wrong.
+
+Supporting evidence across every artifact in this repo: `b33 & 0x03` is **never**
+set, on any channel, in any dump. Observed values are only `0x80` (all channels
+in five dumps) and `0x88` (10 of blue's 19, the extra `0x08` falling in the
+documented analog `&0x0C` bandwidth field). The other byte-33 fields check out
+against the CPS: `&0x40` RX-only is clear and the CPS shows RX Only = No.
+
+⚠️ **Not yet decisive** — every sample is a High-power channel, so this
+distinguishes "power lives at `0xC0`" from "`0x80` is some always-set flag" only
+by inference. The settling experiment is one line of CPS work: set a single
+channel to Low, save, and diff the `.dat`. Until then, treat a p64tool power
+readout on a P4 as unreliable, and note that *writing* power through p64tool
+would set the wrong bits.
+
+### Zones, scan list, messages
+
+- **2 zones**, both full: `Zone 1` = the 16 digital channels (records 1–8 and
+  25–32), `Zone 2` = the 16 analog channels (records 9–24). Member count at
+  record offset 34–35 reads 16 for both; members are 1-based channel record
+  numbers, u16 LE, from offset 36.
+- **1 scan list**, `Scan 1`, member count 1 — and the single member is
+  `0x0000`.
+
+  🔑 **That `0` is the "Selected" entry the CPS shows, and it is a sentinel, not
+  a placeholder or an empty slot.** Real channel references are 1-based
+  everywhere else in the codeplug — the zone member lists above run `0x0001` to
+  `0x0020` — so `0` cannot denote a channel. It is the reserved id for "whatever
+  channel is currently selected", and the member count of 1 confirms the slot is
+  genuinely occupied rather than blank (blank members are `0xFFFF`).
+
+  The rest of `Scan 1` is unset: designated/revert TX channel `0xFFFF`, priority
+  channel 1 `0xFFFF`, priority channel 2 `0xFFFF`, all 15 remaining member slots
+  `0xFFFF`.
+- **1 quick-text message**, `HELLO`. The other 31 `rML` slots are blank.
 
 ### Frequencies
 
 `461.1125` `461.1375` `461.1625` `468.5625` `468.6125` `468.6625` `456.3375`
-`456.4375` `459.6025`/`459.6062` `448.1938` `469.3687` `449.3125` `459.1250`
+`456.4375` `459.6025`/`459.60625` `448.19375` `469.36875` `449.3125` `459.1250`
 `444.5500` `457.1750` `442.8750`
 
-All land exactly on the 12.5 kHz raster — a cheap sanity check that a frequency
-decode is scaled correctly.
+🔴 **They do NOT all land on the 12.5 kHz raster.** An earlier revision of this
+document said they did and offered it as "a cheap sanity check that a frequency
+decode is scaled correctly". It is the opposite: a decoder validated that way
+would reject its own correct output. Four of the seventeen are off it:
+
+| frequency | 12.5 kHz | 6.25 kHz |
+|---|---|---|
+| `448.193750` | no | yes |
+| `469.368750` | no | yes |
+| `459.606250` | no | yes |
+| `459.602500` | no | **no** — 2.5 kHz raster |
+
+`459.6025` sits on neither grid. Whatever check you use, it has to accept that
+one. Frequencies are plain u32 LE Hz at channel offsets 36–39 and 40–43, so
+there is nothing to scale and no raster assumption is needed.
 
 ⚠️ **These are vendor defaults, not a licensed channel plan.** They sit in UHF
 business/itinerant territory and several fall **inside the 70 cm amateur band**
-(442.875, 444.550, 448.1938, 449.3125). Transmitting requires the appropriate
+(442.875, 444.550, 448.19375, 449.3125). Transmitting requires the appropriate
 authorization; the factory list is not evidence of one. Do not treat this block
 as a legal operating plan.
+
+### Tones — settings recorded, bytes not yet bound
+
+The operator's CPS screens for the factory codeplug read: **Disable All Tones**
+off, **Talk Permit Tone** = *Analogue & Digital*, and all fourteen tone options
+enabled (Warning, Channel Busy Lock, TOT, TOT Pre Alarm, Battery Low, Empty
+Channel, Power On, Call Alert, Radio Kill, Radio Active, Private Call, Group
+Call, All Call, Empty Contacts).
+
+The corresponding bytes, for whoever binds them next:
+
+```
+020400  = ec 00 0c ff        →  WW02[100..103], r02 payload[85..88]
+0A0000  = 05 00 01 03 03 0a 01 01 01 01 01 01 01 00 01 01 01
+          01 01 00 01 00 01 00 01 00 01 01 01 01 01 01 01
+```
+
+p64tool documents `WW02[100]`/`[101]` as talk-permit-tone and all-tones-off,
+with `WW02[100] == 0xCD` muting everything. That is **consistent** here:
+`WW02[100]` is `0xEC`, not `0xCD`, and tones are on.
+
+⚠️ **Beyond that, do not guess.** Two decodes that look inviting are both wrong:
+the fourteen toggles are not a bitfield in `WW02[100..101]` (all fourteen are
+enabled, and neither `0xEC 0x00` nor its complement has fourteen matching bits),
+and they are not a fourteen-byte run of `01` in `r0A` either (the longest run
+there is seven, broken by `00` at record offsets 13, 19, 21, 23 and 25).
+
+The comparison that would settle it is available: `retevis_matetalk_p4_family.dat`
+differs from the factory save at exactly these bytes — `020400` reads `28 08 0c ff`
+there, so `WW02[100]` = `0x28` and `[101]` = `0x08`. Capture that radio's Tones
+screen and the two saves become a differential pair.
 
 ## The write path
 
