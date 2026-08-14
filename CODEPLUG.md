@@ -28,7 +28,16 @@ Two OEM CPS v1.5 reads of a factory-fresh, unmodified radio, 10,818 bytes and
   read from the **purple** radio, the unit `p64tool_dumps/p64tool_purple_20260813/`
   established as genuinely factory-default.
 
-✅ **The two saves are byte-identical across all 68 records.** The only
+Plus one deliberate differential:
+
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_low682sn_20260813.dat` —
+  the same radio after three edits and nothing else: `ACH 1` set to **Low**
+  power, radio DMR ID set to **682**, and the CPS "Serial No" set to the unit's
+  real case serial. Six records differ from the factory save, and because only
+  three things changed, most of them bind directly. It settled the power
+  question below.
+
+✅ **The two factory saves are byte-identical across all 68 records.** The only
 difference in the whole file is `010004`, the save timestamp. This matters
 because `p64tool_dumps/p64tool_baseline_factory_20260812/` — the *p64tool* dump
 with a similar name — turned out to be mislabelled family state, which cast
@@ -316,28 +325,49 @@ end-to-end on this codeplug, not just plausible.
 - `03` contains ASCII `192.168.10.1`; `05EM01` is named `DigiSys1`; `ML0001`
   holds `HELLO` (record 1, length 5).
 
-### 🔴 Byte 33 is `0x80` and the CPS shows **High** power — p64tool decodes Low
+### Channel power was decoded backwards — RESOLVED, and our first fix was wrong
 
-p64tool's `docs/codeplug-format.md` maps channel byte 33 as `&0x03` power,
-`0=low, 2=high`. On this codeplug `&0x03` is `0` for every channel, which decodes
-as **Low** — but the OEM CPS displays **High** for all 32.
+p64tool's `docs/codeplug-format.md` mapped channel byte 33 as `&0x03` power,
+`0=low, 2=high`. On the factory codeplug byte 33 is `0x80` on every channel, so
+`&0x03` reads `0` → **Low**, while the OEM CPS displays **High** on all 32.
 
-The unaccounted bit is `0x80`. Reading power as `(b33 & 0xC0) >> 6` yields `2`,
-which is exactly the "high" value p64tool already documents, so the *values* look
-right and the *mask* looks wrong.
+The differential save settles it. Setting `ACH 1` to Low in the CPS moved that
+one byte and nothing else in the record:
 
-Supporting evidence across every artifact in this repo: `b33 & 0x03` is **never**
-set, on any channel, in any dump. Observed values are only `0x80` (all channels
-in five dumps) and `0x88` (10 of blue's 19, the extra `0x08` falling in the
-documented analog `&0x0C` bandwidth field). The other byte-33 fields check out
-against the CPS: `&0x40` RX-only is clear and the CPS shows RX Only = No.
+```
+08CH09[33]   0x80  ->  0x82        ACH 1, High -> Low
+```
 
-⚠️ **Not yet decisive** — every sample is a High-power channel, so this
-distinguishes "power lives at `0xC0`" from "`0x80` is some always-set flag" only
-by inference. The settling experiment is one line of CPS work: set a single
-channel to Low, save, and diff the `.dat`. Until then, treat a p64tool power
-readout on a P4 as unreliable, and note that *writing* power through p64tool
-would set the wrong bits.
+So the **mask was right and the polarity was inverted**: bits `[1:0]` are
+`0 = high, 2 = low`. Every P4 decode before this reported power backwards, and
+writing such a config back would have flipped it on the radio. Fixed upstream in
+`Chicago-Offline/p64tool` `feat/p4-support` (`0272d3e`), with the mapping moved
+into `power_from_bits`/`power_to_bits` so decode, apply and the regression test
+share one definition.
+
+🔴 **The fix this document proposed first — `(b33 & 0xC0) >> 6` — was wrong.**
+Worth keeping, because the reasoning felt tight and wasn't. The argument was:
+`&0x03` is never set on any channel in any dump, `0x80` always is, and
+`0x80 >> 6` happens to equal `2`, the value already documented as "high". So a
+bit that was always set got read as the field that was always High.
+
+Every step was true and the conclusion was still wrong, because **the sample had
+no variation in the thing being measured** — all 32 channels were High. With one
+value of the output, any constant in the record can be made to explain it. That
+is curve-fitting to a single point, and the giveaway was that the hypothesis
+needed the vendor to have picked an odd encoding when a simpler one was sitting
+there.
+
+Cost of testing it: one CPS edit and a save. **When a hypothesis rests on a
+constant, go get a second value before writing it down.**
+
+`0x80` remains unexplained — set on every channel record observed, in every dump
+and every state. Upstream now records it as unknown rather than folding it into
+the power field, which is the right place for it.
+
+The other byte-33 fields do check out against the CPS: `&0x40` RX-only is clear
+and the CPS shows RX Only = No; blue's `0x88` channels carry `0x08` in the
+documented analog `&0x0C` bandwidth field.
 
 ### Zones, scan list, messages
 
@@ -355,10 +385,61 @@ would set the wrong bits.
   channel is currently selected", and the member count of 1 confirms the slot is
   genuinely occupied rather than blank (blank members are `0xFFFF`).
 
+  Now handled upstream as `[[scan]] include_selected`. It mattered more than it
+  looked: `decode` had been dropping the member and `apply` unconditionally
+  re-adding it, so a scan list *without* "Selected" could not be represented and
+  would have been corrupted on write.
+
   The rest of `Scan 1` is unset: designated/revert TX channel `0xFFFF`, priority
   channel 1 `0xFFFF`, priority channel 2 `0xFFFF`, all 15 remaining member slots
   `0xFFFF`.
 - **1 quick-text message**, `HELLO`. The other 31 `rML` slots are blank.
+
+## What else the differential save moved
+
+Six records differ between the factory save and `..._low682sn_20260813.dat`.
+Three were the requested edits, one is bookkeeping, and two were not asked for.
+
+**Requested — all three bind cleanly:**
+
+| Record | Change | Field |
+|---|---|---|
+| `08CH09[33]` | `0x80` → `0x82` | `ACH 1` power, High → Low |
+| `030000[0..1]` | `01 00` → `82 06` | radio DMR ID, 1 → 682 |
+| `010009` | `123456789` → 16 chars | CPS "Serial No" |
+
+The DMR ID confirms the **BCD little-endian** encoding p64tool documents:
+`82 06` reads as digit pairs `82` then `06`, least-significant byte first, giving
+`682`. Not a u16 — `0x0682` would be 1666.
+
+⚠️ **The Serial No field is full at 16 characters, so it has no NUL
+terminator** and runs straight into the field at payload 241. Read it
+length-bounded, not NUL-bounded; the factory value `123456789` is short enough to
+terminate and hides the problem. It is codeplug data and travels with a clone,
+so it is still not a hardware id — see
+`p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
+
+**Bookkeeping:** `010004`, the save timestamp.
+
+**Not requested, and worth watching:** the CPS rewrote nine bytes around the
+password area that the operator never touched.
+
+```
+r02 payload[28..36]   factory  00 00 00 00 00 00 00 00 00
+                      after    ff ff ff ff ff ff ff ff 00
+```
+
+That is `020100[19]` plus the first seven bytes of `02CODE` — the record whose
+key literally reads `CODE`, and which p64tool leaves unbound. No password was
+set in either state (`WW02[24]` is the sentinel, and neither `0xF8` nor `0x8F`
+equals the "enabled" value `2`), so both presumably mean "no code". This is the
+same shape as the `8f`/`f8` and `rML`-fill normalisations: two encodings of an
+empty field, one factory and one CPS-authored.
+
+**It is not a decode problem — it is a write-path caution.** p64tool preserves
+these bytes verbatim, which is the correct behaviour for bytes nobody has bound.
+Flagged only so that a future differential does not mistake a CPS artifact for
+an operator edit.
 
 ### Frequencies
 

@@ -17,10 +17,10 @@ the checklist below has now been done, and it changes the picture:
 - **NEW, and the important one: `roundtrip` failed on every P4 dump.** Written
   up at the end. Already fixed on branch `feat/p4-roundtrip-fidelity`.
 - **NEW 2026-08-13, findings 6 and 7**, from the first OEM CPS export taken of a
-  radio we also hold a p64tool dump of. Finding 6 is a probable wrong bitmask on
-  channel power — p64tool reads Low where the CPS shows High — and needs one
-  more CPS experiment before filing. Finding 7 is a docs-only mislabel of the
-  region-size column.
+  radio we also hold a p64tool dump of. **Finding 6 is fixed** — channel power
+  was decoded backwards — though the fix this draft first proposed was wrong,
+  which is written up because the mistake generalises. Finding 7, a docs-only
+  mislabel of the region-size column, is still open.
 
 Radio under test:
 
@@ -49,6 +49,9 @@ Supporting artifacts, all in this repo:
   screens transcribed alongside. This is what makes findings 6 and 7 possible:
   it is the only place we can see a decoded field and the radio's bytes side by
   side and check that p64tool agrees with the vendor.
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_low682sn_20260813.dat` — the
+  same radio again with three deliberate edits (one channel to Low power, DMR ID
+  682, real Serial No). The differential that settled finding 6.
 
 ---
 
@@ -66,10 +69,10 @@ Supporting artifacts, all in this repo:
       `p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
 - [x] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`.
       Done — finding 2 is stale, finding 1 is docs-only.
-- [ ] **Settle finding 6 before filing it.** Set one channel to Low power in the
-      CPS, save, and diff the `.dat` against the factory save. Confirms the
-      `0xC0` mask or relocates the field; either way it turns an inference into
-      an observation.
+- [x] **Settle finding 6 before filing it.** Done — one channel set to Low in the
+      CPS, saved, and diffed against the factory save. It refuted the mask this
+      draft proposed and produced the real answer (inverted polarity), which is
+      the argument for keeping this checklist item on future findings.
 - [ ] Decide whether to open one combined issue or several.
 
 ---
@@ -270,52 +273,63 @@ whose manifest has any `header_ok=NO`.
 
 ---
 
-## Finding 6 — channel power decodes as Low on a codeplug the CPS shows as High
+## Finding 6 — channel power was decoded backwards — FIXED
 
-**Confidence: medium-high on the defect, medium on the proposed fix.** New
-2026-08-13, from the first OEM CPS export taken of a radio we also have a
-p64tool dump of.
+**Confidence: high. Settled by a differential CPS save, then fixed.** 🔴 **Our
+first proposed fix was wrong** — see below, it is the more useful half of this
+entry.
 
-`docs/codeplug-format.md` maps channel record byte 33 as:
+`docs/codeplug-format.md` mapped channel record byte 33 as:
 
 > `&0x03` power (0=low, 2=high); `&0x30>>4` TX-admit criteria; `&0x40` RX-only.
 > **A** also: `&0x0C` bandwidth/spacing
 
-On the factory-default codeplug, byte 33 is `0x80` on all 32 channels, so
-`&0x03` is `0` and p64tool reports **Low**. The OEM CPS shows **High** for all
-32 — verified channel by channel against
-`cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat` and the
-matching dump `p64tool_dumps/p64tool_purple_20260813/`, which are the same radio
-read three hours apart.
+On the factory-default codeplug byte 33 is `0x80` on all 32 channels, so `&0x03`
+is `0` and p64tool reported **Low**. The OEM CPS shows **High** for all 32.
 
-Proposed reading: **power is `(b33 & 0xC0) >> 6`**, not `b33 & 0x03`. That gives
-`2` = high, which is the value the doc already assigns to high — the value
-semantics look right and only the mask looks wrong.
+Setting one channel to Low in the CPS and saving moved exactly that byte:
 
-Supporting evidence across six dumps and three `.dat` saves in this repo:
+```
+08CH09[33]   0x80  ->  0x82        ACH 1, High -> Low
+```
 
-- `b33 & 0x03` is **never** set. Not on any channel, in any dump, in any state.
-- The only values observed are `0x80` (all channels, five dumps) and `0x88`
-  (10 of blue's 19 channels; the extra `0x08` sits in the documented analog
-  `&0x0C` bandwidth field, so it is accounted for).
-- The neighbouring fields in the same byte check out against the CPS, which is
-  what makes the offset itself trustworthy: `&0x40` RX-only is clear and the CPS
-  shows RX Only = No on all 32.
+**The mask was right; the polarity was inverted.** Bits `[1:0]` are
+`0 = high, 2 = low`. Every P4 decode before the fix reported power backwards, and
+writing such a config back would have flipped it on the radio. Reads were
+unaffected — byte 33 round-trips verbatim — which is why `roundtrip` never
+caught it.
 
-⚠️ **What we cannot yet rule out.** Every channel we have is High power, so the
-evidence distinguishes "power lives at `0xC0`" from "`0x80` is an unrelated
-always-set flag and power is elsewhere" only by inference. Before filing, set one
-channel to Low in the CPS, save, and diff the `.dat` — that is a few minutes of
-work and it either confirms the mask or relocates the field.
+Fixed in `Chicago-Offline/p64tool` `feat/p4-support` (`0272d3e`), with the
+mapping in `power_from_bits`/`power_to_bits` so decode, apply and the regression
+test share one definition. `0x80` is now documented as set on every observed
+record, meaning unknown.
 
-Impact is on the write path only; reads round-trip byte 33 verbatim either way,
-which is why `roundtrip` never caught it.
+### 🔴 What we got wrong, and why it is worth recording
+
+This document originally proposed `(b33 & 0xC0) >> 6`. The argument: `&0x03` is
+never set on any channel in any dump, `0x80` always is, and `0x80 >> 6` equals
+`2` — the value already documented as "high". A bit that was always set got read
+as the field that was always High.
+
+Every step was true and the conclusion was still wrong, because **the sample had
+no variation in the thing being measured.** All 32 channels were High, so any
+constant in the record could be made to explain the output. That is
+curve-fitting to a single point. The tell, in hindsight, was that the hypothesis
+required the vendor to have chosen an odd encoding while a simpler one sat right
+there.
+
+It cost one CPS edit and a save to find out. **When a hypothesis rests on a
+constant, get a second value before writing it down** — and certainly before
+filing it upstream, which the checklist happily prevented here.
+
+**Filing note:** fixed, not a report. Goes upstream with the branch.
 
 ---
 
 ## Finding 7 — the region table's `Size` column is frame length, not payload length
 
-**Confidence: high. Docs-only, trivial, but it propagates.**
+**Confidence: high. Docs-only, trivial, but it propagates. Still open on
+`feat/p4-support` as of `0272d3e`.**
 
 `docs/codeplug-format.md` says of the region table: *"'Size' is the payload
 length `N`"*. The listed values are frame lengths. Measured on all 13 purple

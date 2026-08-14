@@ -160,20 +160,26 @@ with three smaller asymmetries (empty-name terminator, dropped encryption key
 slot, and the `r02[24]` sentinel above). All four dumps now report
 `Roundtrip OK`, including this one.
 
-## Second p64tool issue: channel power decodes as Low, the CPS says High
+## Second p64tool issue: channel power decoded backwards — FIXED
 
 The OEM CPS export of this radio shows **Power = High** on all 32 channels.
-Channel byte 33 is `0x80` on all 32, and p64tool's `&0x03` power mask reads `0`
-from that — **Low**.
+Channel byte 33 is `0x80` on all 32, and p64tool's `&0x03` power mask read that
+as `0` = **Low**.
 
-`&0x03` is never set on any channel in any dump in this repo. Reading power as
-`(b33 & 0xC0) >> 6` gives `2`, the value p64tool already documents as "high", so
-the values look right and the mask looks wrong. Full evidence and the caveat
-(every sample is a High-power channel, so it is not yet decisive) in
-`../../CODEPLUG.md`.
+A follow-up CPS save with one channel set to Low settled it —
+`../../cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_low682sn_20260813.dat`,
+where `08CH09[33]` moves `0x80` → `0x82` and nothing else in the record changes.
+**The mask was right and the polarity was inverted**: bits `[1:0]` are
+`0 = high, 2 = low`. Fixed upstream in `feat/p4-support` (`0272d3e`).
 
-Reads are unaffected — byte 33 round-trips verbatim either way. Writing power
-through p64tool would not.
+🔴 This note previously proposed `(b33 & 0xC0) >> 6`, reasoning from `0x80` being
+the only bit ever set. That was wrong, and wrong in an instructive way — every
+sample was a High-power channel, so a constant was being fitted to a constant.
+See `../../CODEPLUG.md`. `0x80` is still unexplained and is now documented
+upstream as unknown.
+
+Reads were unaffected — byte 33 round-trips verbatim either way, which is why
+`roundtrip` never caught it. Writing power would not have been.
 
 ## Reproducing
 
