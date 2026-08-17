@@ -1,14 +1,27 @@
 # Draft: upstream findings for `oetiker/p64tool`
 
-**Status: NOT FILED. Holding for more testing.**
+**Status: NOT FILED.** All six findings are now implemented on our fork's
+`feat/p4-support` branch, so this is no longer a list of open questions — it is
+the evidence base for a pull request (or a set of issues, if upstream prefers
+them separately).
 
-Five findings from OEM CPS serial captures, OEM CPS `.dat` saves, and a live
-p64tool read, all against one radio. Each is written as a self-contained issue
-body so any of them can be filed independently once we're confident.
+Six findings from OEM CPS serial captures, OEM CPS `.dat` saves, and live
+p64tool reads. Each is written as a self-contained issue body so any of them can
+be filed independently.
 
-Findings 1–3 are protocol/region observations. **Findings 4 and 5 are field-map
-corrections** — two documented channel/scan-list offsets decode wrongly, and
-unlike the others they are checkable against the CPS UI rather than inferred.
+| # | Finding | Kind | Fixed in fork |
+|---|---|---|---|
+| 1 | `0x44` write ACKs with `0x54` | doc | `PROTOCOL.md` |
+| 2 | `REGIONS` omits 5 regions the CPS touches | correctness | `rKL`/`rML` in `REGIONS` |
+| 3 | First connect after idle returns 0 bytes | robustness | handshake retry in `proto.rs` |
+| 4 | Channel power bits documented inverted | field map | `0272d3e` |
+| 5 | Scan list member 0 is the CPS "Selected" entry | field map | `0272d3e` (`include_selected`) |
+| 6 | Bandwidth is a 2-bit field read as 1 bit | field map | `201aab5` |
+
+Findings 4–6 are field-map corrections and are the strongest of the set: each is
+checkable against the CPS UI rather than inferred from a capture. Finding 6 is
+also the only one with a **silent write-path failure**, and the only one the
+existing `roundtrip` self-test provably cannot catch.
 
 Radio under test:
 
@@ -19,12 +32,11 @@ Built    : 2025-06-23
 Model    : P4 V1.2
 ```
 
-⚠️ **Single radio, single firmware.** Everything below is `n=1` on hardware
-p64tool explicitly flags as outside its validated set
-(`WARNING — P4 V1.2/1.0.0.0 not in p64tool's validated set`). That's the main
-reason to hold: we cannot currently distinguish "p64tool's docs are incomplete"
-from "this firmware behaves differently than the V1.4 CPS it was reverse
-engineered against."
+⚠️ **Single radio, single firmware.** Everything below is `n=1`. For findings
+1–3 we cannot fully distinguish "p64tool's docs are incomplete" from "this
+firmware differs from the V1.4 CPS it was reverse engineered against." Findings
+4–6 are less exposed to that doubt because the CPS displays the field and we can
+read the stored byte for the same channel.
 
 Supporting artifacts, all in this repo:
 
@@ -32,13 +44,16 @@ Supporting artifacts, all in this repo:
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_WRITE_DUMP.txt` — CPS write
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt` — readback
 - `p64tool_dumps/p64tool_baseline_factory_20260812/` — live p64tool read
+- `p64tool_dumps/p64tool_red_familycpd_20260816/` — live read whose `r08` is
+  byte-identical to `cps/cps_saves/retevis_matetalk_p4_familywcpd_red.dat`,
+  which is what grounds findings 4–6
 
 ---
 
 ## Before filing
 
 - [ ] **Second radio.** Ideally a different firmware, at minimum a second unit.
-      All three findings are `n=1`.
+      Everything here is `n=1`.
 - [ ] **Confirm finding 3 is not our cable/driver.** It reproduced on macOS with
       a Prolific PL2303G. Untested on Linux and on a CH340. If it is
       macOS/PL2303G-specific, finding 3 is not an upstream issue at all — it
@@ -48,14 +63,16 @@ Supporting artifacts, all in this repo:
       severity is currently inferred, not observed.
 - [ ] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main` and
       confirm these gaps still exist and weren't fixed since our clone.
-- [ ] Decide whether to open one combined issue or several. Finding 1 is a clean
-      doc patch; finding 2 is a correctness question; finding 3 may be a
-      local quirk; findings 4 and 5 are straightforward doc corrections and are
-      the most confidently filable of the set.
-- [ ] For findings 4 and 5, confirm the CPS version dependency. Ours is CPS
-      v1.5; p64tool was reverse engineered against v1.4. Both findings were read
-      from `.dat` saves, whose payloads equal the region bytes, so the offsets
-      apply — but the *labels* came from the v1.5 UI.
+- [ ] Confirm the CPS version dependency for findings 4–6. Ours is CPS v1.5;
+      p64tool was reverse engineered against v1.4. The offsets came from `.dat`
+      payloads, which equal the region bytes, so they apply — but the *labels*
+      came from the v1.5 UI.
+- [ ] Observe bandwidth value 1 (20 kHz) on hardware. Findings 6's 12.5 and
+      25 kHz mappings are confirmed; 20 kHz is inferred from the field being two
+      bits wide and has not been round-tripped through the CPS.
+- [ ] Decide on one PR versus several issues. Findings 1 and 4–6 are clean
+      patches; finding 2 is a question for upstream rather than a defect claim;
+      finding 3 may be a local quirk.
 
 ---
 
@@ -245,6 +262,56 @@ Consequences for a decoder following the docs:
 
 Capacity is 15 real members if the record ends at 89, not the documented 16. Our
 largest observed list has 11, so we cannot confirm the cap empirically.
+
+---
+
+## Finding 6 — channel bandwidth is a 2-bit field read as a single bit
+
+**Confidence: high for 12.5 and 25 kHz, inferred for 20 kHz.** Confirmed against
+the CPS display and the stored bytes for the same channels.
+
+`docs/codeplug-format.md` describes channel byte 33 `&0x0C` as
+"bandwidth/spacing" without a value table, and the decoder reads a single bit:
+
+```rust
+if mode_b == 1 && pb & 0x04 != 0 { 25.0 } else { 12.5 }
+```
+
+The field is two bits: `(byte33 & 0x0C) >> 2` → `0 = 12.5, 1 = 20, 2 = 25` kHz.
+Value 3 is unobserved.
+
+Our six analog GMRS channels are set to 25 kHz in the CPS and store `0x88`
+(bits = 2). Since `0x04` is clear, the old code decoded all of them as 12.5 kHz.
+
+Three consequences:
+
+1. **Reads misreport.** Every 25 kHz channel is reported as 12.5 kHz.
+2. **20 kHz is inexpressible.** There is no encoding for value 1, so a config
+   cannot represent it and cannot set it.
+3. **Narrowing writes silently do nothing.** `apply` did
+   `pb &= !0x04; if bw >= 20.0 { pb |= 0x04 }` and never touched `0x08`. Setting
+   `bandwidth_khz = 12.5` on one of these channels therefore left the radio at
+   25 kHz while the config claimed narrowband. For anyone using p64tool to bring
+   a channel into compliance with a narrowband limit, that is a silent failure
+   in the unsafe direction.
+
+**`roundtrip` cannot catch this.** We ran it against the affected dump and it
+reported `Roundtrip OK: decode->apply is byte-faithful` on all 13 regions —
+because `apply` never wrote `0x08`, the bytes were preserved while the decoded
+value was wrong. A byte-faithful self-test does not imply a correct decode; it
+only proves the bits a decoder ignores are the same bits `apply` leaves alone.
+That is worth stating in `DESIGN.md` next to the roundtrip claim.
+
+Evidence:
+
+```
+CPS shows 25 kHz  → byte 33 = 0x88  → bits 2
+CPS shows 12.5kHz → byte 33 = 0x80  → bits 0
+```
+
+The `r08` region of `p64tool_dumps/p64tool_red_familycpd_20260816/` is
+byte-identical to the corresponding CPS `.dat` save, so the CPS labels and the
+stored bytes describe the same 18 channel records.
 
 ---
 
