@@ -19,6 +19,7 @@ REC = re.compile(r"^(.{6}) (\d{5})=(.*?)\s*$")
 # (bits 0 = High, bits 2 = Low), confirmed against a codeplug read back off the radio.
 POWER = {0: "high", 1: "mid", 2: "low"}
 ADMIT = {0: "always", 1: "channel-free", 2: "color-code-free", 3: "correct-cc"}
+# Confirmed against the CPS dropdown; only values 0 and 2 seen in the wild.
 BANDWIDTH = {0: "12.5k", 1: "20k", 2: "25k"}
 CALL_TYPE = {0: "private", 1: "group", 2: "all"}
 
