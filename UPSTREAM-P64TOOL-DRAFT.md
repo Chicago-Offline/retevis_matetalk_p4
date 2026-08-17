@@ -2,9 +2,13 @@
 
 **Status: NOT FILED. Holding for more testing.**
 
-Three findings from OEM CPS serial captures plus a live p64tool read, all against
-one radio. Each is written as a self-contained issue body so any of them can be
-filed independently once we're confident.
+Five findings from OEM CPS serial captures, OEM CPS `.dat` saves, and a live
+p64tool read, all against one radio. Each is written as a self-contained issue
+body so any of them can be filed independently once we're confident.
+
+Findings 1–3 are protocol/region observations. **Findings 4 and 5 are field-map
+corrections** — two documented channel/scan-list offsets decode wrongly, and
+unlike the others they are checkable against the CPS UI rather than inferred.
 
 Radio under test:
 
@@ -44,9 +48,14 @@ Supporting artifacts, all in this repo:
       severity is currently inferred, not observed.
 - [ ] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main` and
       confirm these gaps still exist and weren't fixed since our clone.
-- [ ] Decide whether to open one combined issue or three. Finding 1 is a clean
+- [ ] Decide whether to open one combined issue or several. Finding 1 is a clean
       doc patch; finding 2 is a correctness question; finding 3 may be a
-      local quirk.
+      local quirk; findings 4 and 5 are straightforward doc corrections and are
+      the most confidently filable of the set.
+- [ ] For findings 4 and 5, confirm the CPS version dependency. Ours is CPS
+      v1.5; p64tool was reverse engineered against v1.4. Both findings were read
+      from `.dat` saves, whose payloads equal the region bytes, so the offsets
+      apply — but the *labels* came from the v1.5 UI.
 
 ---
 
@@ -169,6 +178,73 @@ Reproduced only on macOS (Apple silicon) with the in-box Prolific PL2303G at
 Linux-targeted. Plausible this is a PL2303G/DriverKit wake-up behavior rather
 than radio or protocol behavior, in which case it belongs in our notes and not
 in an upstream issue.
+
+---
+
+## Finding 4 — channel TX power bits are documented inverted
+
+**Confidence: high.** Checked against the CPS display for a codeplug written to
+the radio and read back.
+
+`docs/codeplug-format.md` documents channel byte 33 as:
+
+> `&0x03` power (0=low, 2=high)
+
+The CPS shows the opposite. In our family/CPD codeplug:
+
+| Channels | byte 33 | `&0x03` | CPS shows |
+|---|---|---|---|
+| `FAM *` | `0x88` | 0 | **High** |
+| `CPD CW1–7` | `0xC2` | 2 | **Low** |
+
+So the mapping is `0=high, 2=low`. Value 1 has not been observed and is presumed
+to be the mid/middle setting.
+
+This also changes the reading of a stock codeplug: the factory default is byte 33
+`0x80` on all 32 channels, which is **high** power, not low.
+
+A decoder using the documented mapping reports every channel's power backwards,
+which is a safety-relevant misread — it understates transmit power on channels a
+user may have deliberately set low.
+
+---
+
+## Finding 5 — scan list member array starts at 60, not 58
+
+**Confidence: high.** Consistent across three independent `.dat` saves including
+a factory-default one, and matches observable CPS behaviour.
+
+`docs/codeplug-format.md` documents scan list records as:
+
+> 56–57 member count (u16 LE); 58–89 member channel numbers (16 × u16 LE)
+
+Offset 58 is not a channel member. It is the **"Current Channel"** entry that the
+CPS always displays in a scan list and does not allow you to delete. It is stored
+as `0x0000` and **is** included in the count at 56, so real channel members begin
+at offset 60.
+
+Observed, member slots read as u16 LE from 58:
+
+```
+factory 'Scan 1'  count=1   [0, FFFF, FFFF, ...]
+'Family'          count=12  [0, 9, 10, 11, 12, 13, 14, 1, 2, 3, 4, 5, FFFF, ...]
+'CPD'             count=8   [0, 6, 7, 8, 15, 16, 17, 18, FFFF, ...]
+```
+
+The factory case is the clearest: an empty scan list has `count=1` and a single
+`0` entry. Under the documented reading it would be a one-member list containing
+channel 0.
+
+Consequences for a decoder following the docs:
+
+- every scan list gains a phantom member "channel 0"
+- channel indices are 1-based, so `0` is not a valid channel and the phantom
+  entry either renders as garbage or resolves to the wrong channel if the
+  decoder treats members as 0-based
+- member counts are all reported one too high
+
+Capacity is 15 real members if the record ends at 89, not the documented 16. Our
+largest observed list has 11, so we cannot confirm the cap empirically.
 
 ---
 

@@ -206,8 +206,11 @@ one of our edits.
 - **Every channel is simplex** (`tx == rx`); no splits, no offsets.
 - Analog CTCSS: 67.0, 71.9, 94.8, 136.5 Hz, four channels each, RX tone == TX
   tone. No DCS anywhere in the factory config.
-- Byte 33 is `0x80` on all 32 channels → power low, TX-admit 0, RX-only clear,
-  bandwidth 0.
+- Byte 33 is `0x80` on all 32 channels → power **high**, TX-admit 0, RX-only
+  clear, bandwidth 12.5 kHz. ⚠️ Power bits `&0x03` are `0=high, 2=low` — the
+  **inverse** of p64tool's `docs/codeplug-format.md`, confirmed against the CPS
+  display. Bandwidth bits `&0x0C>>2` are `0=12.5k, 1=20k, 2=25k`, also
+  CPS-confirmed.
 - `03` contains ASCII `192.168.10.1`; `05EM01` is named `DigiSys1`; `ML0001`
   holds `HELLO`.
 
