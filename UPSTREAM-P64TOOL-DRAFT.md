@@ -55,6 +55,27 @@ Supporting artifacts, all in this repo:
 
 ---
 
+**Fork status.** Every finding below is implemented on our fork's
+`feat/p4-support` / `feat/p4-roundtrip-fidelity` branches, so this is the
+evidence base for a PR rather than a list of open questions.
+
+| # | Finding | Kind | Status |
+|---|---|---|---|
+| 1 | `0x44` write ACKs with `0x54` | doc | valid, docs-only |
+| 2 | `REGIONS` omits regions the CPS touches | correctness | **STALE — do not file** |
+| 3 | First connect after idle returns 0 bytes | robustness | valid, retry in `proto.rs` |
+| 4 | Channel TX power bits documented inverted | field map | fixed (`0272d3e`) |
+| 5 | Scan list member array starts at 60, not 58 | field map | fixed (`0272d3e`) |
+| 6 | Bandwidth is a 2-bit field read as 1 bit | field map | fixed (`201aab5`) |
+| 7 | `roundtrip` not byte-faithful on any P4 dump | correctness | fixed (`feat/p4-roundtrip-fidelity`) |
+| 8 | Short region read written to disk with only a warning | robustness | open |
+| 9 | Region table `Size` column is frame length | doc | open |
+
+Findings 4–6 are field-map corrections and the strongest of the set: each is
+checkable against the CPS UI rather than inferred from a capture.
+
+---
+
 ## Before filing
 
 - [x] **Second radio.** Now four dumps across three physical units, in both
@@ -73,7 +94,19 @@ Supporting artifacts, all in this repo:
       CPS, saved, and diffed against the factory save. It refuted the mask this
       draft proposed and produced the real answer (inverted polarity), which is
       the argument for keeping this checklist item on future findings.
-- [ ] Decide whether to open one combined issue or several.
+
+
+---
+- [ ] Confirm the CPS version dependency for findings 4–6. Ours is CPS v1.5;
+      p64tool was reverse engineered against v1.4. The offsets came from `.dat`
+      payloads, which equal the region bytes, so they apply — but the *labels*
+      came from the v1.5 UI.
+- [ ] Observe bandwidth value 1 (20 kHz) on hardware. Finding 6's 12.5 and
+      25 kHz mappings are confirmed; 20 kHz is inferred from the field being two
+      bits wide and has not been round-tripped through the CPS.
+- [ ] Decide on one PR versus several issues. Findings 1 and 4–6 are clean
+      patches; finding 2 is a question for upstream rather than a defect claim;
+      finding 3 may be a local quirk.
 
 ---
 
@@ -123,6 +156,8 @@ ahead of the payload proper.
 
 ---
 
+---
+
 ## Finding 2 — ~~`REGIONS` omits 5 regions the CPS touches~~ STALE, DO NOT FILE
 
 **Re-checked 2026-08-13 against upstream `main`: the gap does not exist.**
@@ -160,6 +195,8 @@ intentional?"
 `ff ff` and `32 00` are read but never written by the CPS, consistent with
 `ff ff` being mostly-erased calibration storage. That is a useful guard rail and
 matches p64tool's existing note.
+
+---
 
 ---
 
@@ -210,7 +247,132 @@ in an upstream issue.
 
 ---
 
-## Finding 4 — `roundtrip` was not byte-faithful on any P4 codeplug — FIXED
+---
+
+## Finding 4 — channel TX power bits are documented inverted
+
+**Confidence: high.** Checked against the CPS display for a codeplug written to
+the radio and read back.
+
+`docs/codeplug-format.md` documents channel byte 33 as:
+
+> `&0x03` power (0=low, 2=high)
+
+The CPS shows the opposite. In our family/CPD codeplug:
+
+| Channels | byte 33 | `&0x03` | CPS shows |
+|---|---|---|---|
+| `FAM *` | `0x88` | 0 | **High** |
+| `CPD CW1–7` | `0xC2` | 2 | **Low** |
+
+So the mapping is `0=high, 2=low`. Value 1 has not been observed and is presumed
+to be the mid/middle setting.
+
+This also changes the reading of a stock codeplug: the factory default is byte 33
+`0x80` on all 32 channels, which is **high** power, not low.
+
+A decoder using the documented mapping reports every channel's power backwards,
+which is a safety-relevant misread — it understates transmit power on channels a
+user may have deliberately set low.
+
+---
+
+---
+
+## Finding 5 — scan list member array starts at 60, not 58
+
+**Confidence: high.** Consistent across three independent `.dat` saves including
+a factory-default one, and matches observable CPS behaviour.
+
+`docs/codeplug-format.md` documents scan list records as:
+
+> 56–57 member count (u16 LE); 58–89 member channel numbers (16 × u16 LE)
+
+Offset 58 is not a channel member. It is the **"Current Channel"** entry that the
+CPS always displays in a scan list and does not allow you to delete. It is stored
+as `0x0000` and **is** included in the count at 56, so real channel members begin
+at offset 60.
+
+Observed, member slots read as u16 LE from 58:
+
+```
+factory 'Scan 1'  count=1   [0, FFFF, FFFF, ...]
+'Family'          count=12  [0, 9, 10, 11, 12, 13, 14, 1, 2, 3, 4, 5, FFFF, ...]
+'CPD'             count=8   [0, 6, 7, 8, 15, 16, 17, 18, FFFF, ...]
+```
+
+The factory case is the clearest: an empty scan list has `count=1` and a single
+`0` entry. Under the documented reading it would be a one-member list containing
+channel 0.
+
+Consequences for a decoder following the docs:
+
+- every scan list gains a phantom member "channel 0"
+- channel indices are 1-based, so `0` is not a valid channel and the phantom
+  entry either renders as garbage or resolves to the wrong channel if the
+  decoder treats members as 0-based
+- member counts are all reported one too high
+
+Capacity is 15 real members if the record ends at 89, not the documented 16. Our
+largest observed list has 11, so we cannot confirm the cap empirically.
+
+---
+
+---
+
+## Finding 6 — channel bandwidth is a 2-bit field read as a single bit
+
+**Confidence: high for 12.5 and 25 kHz, inferred for 20 kHz.** Confirmed against
+the CPS display and the stored bytes for the same channels.
+
+`docs/codeplug-format.md` describes channel byte 33 `&0x0C` as
+"bandwidth/spacing" without a value table, and the decoder reads a single bit:
+
+```rust
+if mode_b == 1 && pb & 0x04 != 0 { 25.0 } else { 12.5 }
+```
+
+The field is two bits: `(byte33 & 0x0C) >> 2` → `0 = 12.5, 1 = 20, 2 = 25` kHz.
+Value 3 is unobserved.
+
+Our six analog GMRS channels are set to 25 kHz in the CPS and store `0x88`
+(bits = 2). Since `0x04` is clear, the old code decoded all of them as 12.5 kHz.
+
+Three consequences:
+
+1. **Reads misreport.** Every 25 kHz channel is reported as 12.5 kHz.
+2. **20 kHz is inexpressible.** There is no encoding for value 1, so a config
+   cannot represent it and cannot set it.
+3. **Narrowing writes silently do nothing.** `apply` did
+   `pb &= !0x04; if bw >= 20.0 { pb |= 0x04 }` and never touched `0x08`. Setting
+   `bandwidth_khz = 12.5` on one of these channels therefore left the radio at
+   25 kHz while the config claimed narrowband. For anyone using p64tool to bring
+   a channel into compliance with a narrowband limit, that is a silent failure
+   in the unsafe direction.
+
+**`roundtrip` cannot catch this.** We ran it against the affected dump and it
+reported `Roundtrip OK: decode->apply is byte-faithful` on all 13 regions —
+because `apply` never wrote `0x08`, the bytes were preserved while the decoded
+value was wrong. A byte-faithful self-test does not imply a correct decode; it
+only proves the bits a decoder ignores are the same bits `apply` leaves alone.
+That is worth stating in `DESIGN.md` next to the roundtrip claim.
+
+Evidence:
+
+```
+CPS shows 25 kHz  → byte 33 = 0x88  → bits 2
+CPS shows 12.5kHz → byte 33 = 0x80  → bits 0
+```
+
+The `r08` region of `p64tool_dumps/p64tool_red_familycpd_20260816/` is
+byte-identical to the corresponding CPS `.dat` save, so the CPS labels and the
+stored bytes describe the same 18 channel records.
+
+---
+
+---
+
+## Finding 7 — `roundtrip` was not byte-faithful on any P4 codeplug — FIXED
 
 **Confidence: high. Reproduced on four dumps, three radios, then fixed and
 re-verified.** This is the one that actually mattered.
@@ -254,7 +416,9 @@ than an issue.
 
 ---
 
-## Finding 5 — a short region read is written to disk with only a warning
+---
+
+## Finding 8 — a short region read is written to disk with only a warning
 
 **Confidence: medium. Observed once, mechanism clear.**
 
@@ -273,7 +437,40 @@ whose manifest has any `header_ok=NO`.
 
 ---
 
-## Finding 6 — channel power was decoded backwards — FIXED
+---
+
+## Finding 9 — the region table's `Size` column is frame length, not payload length
+
+**Confidence: high. Docs-only, trivial, but it propagates. Still open on
+`feat/p4-support` as of `0272d3e`.**
+
+`docs/codeplug-format.md` says of the region table: *"'Size' is the payload
+length `N`"*. The listed values are frame lengths. Measured on all 13 purple
+regions:
+
+```
+file_size == 18 + payload_len          # 14-byte header + payload + 4-byte trailer
+payload_len == u16le(rNN.bin[12..14])  # the header's own length field
+```
+
+So `r03` is listed as 51 and its payload is 33; `r08` is listed as 18,451 and its
+payload is 18,433. The distinction matters as soon as anything is written to a
+region boundary — we hit it decoding a CPS `.dat` record that turned out to
+overrun the `r03` payload by two bytes and match anyway, because the frame
+trailer begins `FF FF` and is indistinguishable from padding.
+
+Suggested: relabel the column `Frame` and add a `Payload` column, or state the
+`18 + N` relationship next to the table.
+
+---
+
+---
+
+## Finding 10 — channel power was decoded backwards — FIXED
+
+> Same defect as **Finding 4** above, which states the corrected mapping. This
+> entry is retained because the *route* to it — a wrong first hypothesis,
+> refuted by a differential CPS save — is the more useful half.
 
 **Confidence: high. Settled by a differential CPS save, then fixed.** 🔴 **Our
 first proposed fix was wrong** — see below, it is the more useful half of this
@@ -323,31 +520,6 @@ constant, get a second value before writing it down** — and certainly before
 filing it upstream, which the checklist happily prevented here.
 
 **Filing note:** fixed, not a report. Goes upstream with the branch.
-
----
-
-## Finding 7 — the region table's `Size` column is frame length, not payload length
-
-**Confidence: high. Docs-only, trivial, but it propagates. Still open on
-`feat/p4-support` as of `0272d3e`.**
-
-`docs/codeplug-format.md` says of the region table: *"'Size' is the payload
-length `N`"*. The listed values are frame lengths. Measured on all 13 purple
-regions:
-
-```
-file_size == 18 + payload_len          # 14-byte header + payload + 4-byte trailer
-payload_len == u16le(rNN.bin[12..14])  # the header's own length field
-```
-
-So `r03` is listed as 51 and its payload is 33; `r08` is listed as 18,451 and its
-payload is 18,433. The distinction matters as soon as anything is written to a
-region boundary — we hit it decoding a CPS `.dat` record that turned out to
-overrun the `r03` payload by two bytes and match anyway, because the frame
-trailer begins `FF FF` and is indistinguishable from padding.
-
-Suggested: relabel the column `Frame` and add a `Payload` column, or state the
-`18 + N` relationship next to the table.
 
 ---
 

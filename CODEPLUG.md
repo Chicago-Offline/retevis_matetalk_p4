@@ -322,6 +322,11 @@ end-to-end on this codeplug, not just plausible.
   `GroupList 1`.
 - No channel is assigned a scan list (index 0), and none is RX-only.
 - TOT byte 44 is `0x24` (36) on all 32.
+- Byte 33 is `0x80` on all 32 channels → power **high**, TX-admit 0, RX-only
+  clear, bandwidth 12.5 kHz. ⚠️ Power bits `&0x03` are `0=high, 2=low` — the
+  **inverse** of p64tool's `docs/codeplug-format.md`, confirmed against the CPS
+  display. Bandwidth bits `&0x0C>>2` are `0=12.5k, 1=20k, 2=25k`, also
+  CPS-confirmed.
 - `03` contains ASCII `192.168.10.1`; `05EM01` is named `DigiSys1`; `ML0001`
   holds `HELLO` (record 1, length 5).
 
