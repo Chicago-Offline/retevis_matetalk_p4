@@ -10,7 +10,14 @@ relationship between the two.
 
 ## `p64tool_baseline_factory_20260812/`
 
-Factory-fresh, unmodified radio. Same physical unit and same codeplug state as
+🔴 **Misnamed — this is NOT factory state.** Its `r08` holds the *family*
+codeplug (`FAM ALL D`, `FAM TEAM 1 D`, … `FAM RPTR`), the same channel set as
+the two dumps explicitly labelled family. The "same codeplug state as
+`P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt`" line below is the accurate
+one; "factory-fresh" was wrong and contradicts it. The data is good, the label
+is not. For genuine factory state see `p64tool_purple_20260813/`.
+
+Same physical unit and same codeplug state as
 `../cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt`.
 
 ```
@@ -31,6 +38,64 @@ the vendor CPS pull the same bytes.
 ⚠️ p64tool prints `WARNING — P4 V1.2/1.0.0.0 not in p64tool's validated set`.
 Harmless for reads. **Resolve it before trusting the write path** against this
 firmware.
+
+## `p64tool_purple_20260813/`
+
+**The genuine factory-default codeplug** — 32 channels (`DCH 1`–`DCH 16` +
+`ACH 1`–`ACH 16`), Serial No `123456789`, DMR ID `1`. 53,381 bytes, md5
+`449156af5f89fa21c89af8799a61ffb1`, `header_ok=yes` on all 13 regions, two
+independent reads byte-identical.
+
+See its `NOTES.md` — it resolves the factory-serial and 11-vs-12-channel open
+questions, corrects the mislabelled dump above, and identifies three bytes that
+distinguish factory state from CPS-written state.
+
+**Also read by the OEM CPS**, three hours after this dump and with no write in
+between:
+`../cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat`.
+62 of its 68 records are byte-identical to this dump, and all 32 channels decode
+to the same values the CPS displays. It is the repo's only paired
+vendor-vs-p64tool view of one radio, and it produced two p64tool findings — see
+`../UPSTREAM-P64TOOL-DRAFT.md`.
+
+⚠️ **The `.dat` naming clash is a trap.** The mislabelled *dump* directory above
+is `p64tool_baseline_factory_20260812`; the *CPS save*
+`retevis_matetalkp4_oem_cps_baseline_factory_20260812.dat` is a different
+artifact and its "factory" label is **correct** — it is byte-identical to the
+0813 purple save apart from the save timestamp. Only the p64tool directory is
+misnamed.
+
+## `p64tool_blue_20260813/`
+
+The blue radio, carrying the **full `yellow.yml` profile including the ham
+channels** — 11 family channels plus 4 ham analog and 4 ham digital (hotspot).
+DMR ID `3207125`. 53,381 bytes, md5 `15e3d29d9a2c6b2e445e8b8c38702465`,
+`header_ok=yes` on all 13 regions, two independent reads byte-identical,
+`roundtrip` OK.
+
+**All 13 regions are byte-identical to `../cps/cps_serial_dumps/P4_BLUE_HAM_READ_DUMP.txt`**
+— a second independent p64tool-vs-CPS parity check, on a different radio and
+codeplug from the first.
+
+## `p64tool_yellow_20260813/`
+
+The yellow radio (`p4_02`, case serial ending 1677) — **11 family channels only**,
+ham channels stripped, DMR ID `439`. 53,381 bytes, md5
+`243d6bd67be5e2d7ec5cfb4f0aa46969`, `roundtrip` OK. Effectively unchanged from
+`p64tool_p4_02_postwrite_selfid439_20260812` (4 bytes, all in `r01`).
+
+Read back-to-back with the blue radio as a controlled two-radio test. Its
+`NOTES.md` **settles the serial question**: both radios return byte-identical
+149-byte connect replies despite being plainly different units, so the
+connect-reply digit string is a model/firmware constant, not a hardware serial.
+It also documents that blue's codeplug carries yellow's Serial No.
+
+---
+
+Blue's `NOTES.md` also carries an important correction: 🔴 **neither the r01 "Serial
+No" nor the CONNECT-reply serial identifies a physical radio.** The first is
+codeplug content that travels with the codeplug; the second is constant across
+every unit observed. Do not infer "same serial, therefore same radio".
 
 ### Region file names do not match the CPS `.dat` record keys
 
@@ -53,9 +118,10 @@ prefixes in a CPS `.dat`. Map by selector, from `manifest.txt`:
 | `rKL.bin` | `00 01` | 43 |
 | `rML.bin` | `01 01` | **16531** |
 
-`rML.bin` (`sel=01 01`) is the second-largest region and is **not documented**
-in p64tool's `REGIONS` table or anywhere else yet. The CPS writes it, so it
-carries real codeplug content. Unmapped — good target for analysis.
+`rML.bin` (`sel=01 01`) is the second-largest region. It holds the **quick-text
+message table** (32 records × 516 bytes at offset 16) — documented upstream in
+p64tool's `docs/codeplug-format.md`; the earlier "not documented anywhere yet"
+note here was stale.
 
 ## Reproducing a read
 

@@ -1,27 +1,26 @@
 # Draft: upstream findings for `oetiker/p64tool`
 
-**Status: NOT FILED.** All six findings are now implemented on our fork's
-`feat/p4-support` branch, so this is no longer a list of open questions — it is
-the evidence base for a pull request (or a set of issues, if upstream prefers
-them separately).
+**Status: RE-CHECKED 2026-08-13 against current upstream `main`.**
 
-Six findings from OEM CPS serial captures, OEM CPS `.dat` saves, and live
-p64tool reads. Each is written as a self-contained issue body so any of them can
-be filed independently.
+The "re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`" item on
+the checklist below has now been done, and it changes the picture:
 
-| # | Finding | Kind | Fixed in fork |
-|---|---|---|---|
-| 1 | `0x44` write ACKs with `0x54` | doc | `PROTOCOL.md` |
-| 2 | `REGIONS` omits 5 regions the CPS touches | correctness | `rKL`/`rML` in `REGIONS` |
-| 3 | First connect after idle returns 0 bytes | robustness | handshake retry in `proto.rs` |
-| 4 | Channel power bits documented inverted | field map | `0272d3e` |
-| 5 | Scan list member 0 is the CPS "Selected" entry | field map | `0272d3e` (`include_selected`) |
-| 6 | Bandwidth is a 2-bit field read as 1 bit | field map | `201aab5` |
-
-Findings 4–6 are field-map corrections and are the strongest of the set: each is
-checkable against the CPS UI rather than inferred from a capture. Finding 6 is
-also the only one with a **silent write-path failure**, and the only one the
-existing `roundtrip` self-test provably cannot catch.
+- **Finding 1 (write ACK `0x54`) — still valid, but docs-only.** The write path
+  is implemented upstream and does verify the 19-byte `0x54` ACK; `PROTOCOL.md`
+  still says "Write (not yet implemented)" and does not document the reply.
+- **Finding 2 (missing regions) — STALE, do not file.** Upstream `REGIONS` now
+  covers all 13 regions. `00 01` and `01 01` are present as `rKL` and `rML`
+  (`rML` = quick-text messages, 32×516 @16), and the 54-byte `op=0x00` frame we
+  saw is upstream's MCU-GET (`0x32`) identity probe. Nothing is missing.
+- **Finding 3 (0-byte first connect) — still valid and now reproduced on a third
+  radio.** See below.
+- **NEW, and the important one: `roundtrip` failed on every P4 dump.** Written
+  up at the end. Already fixed on branch `feat/p4-roundtrip-fidelity`.
+- **NEW 2026-08-13, findings 6 and 7**, from the first OEM CPS export taken of a
+  radio we also hold a p64tool dump of. **Finding 6 is fixed** — channel power
+  was decoded backwards — though the fix this draft first proposed was wrong,
+  which is written up because the mistake generalises. Finding 7, a docs-only
+  mislabel of the region-size column, is still open.
 
 Radio under test:
 
@@ -32,11 +31,9 @@ Built    : 2025-06-23
 Model    : P4 V1.2
 ```
 
-⚠️ **Single radio, single firmware.** Everything below is `n=1`. For findings
-1–3 we cannot fully distinguish "p64tool's docs are incomplete" from "this
-firmware differs from the V1.4 CPS it was reverse engineered against." Findings
-4–6 are less exposed to that doubt because the CPS displays the field and we can
-read the stored byte for the same channel.
+⚠️ The original `n=1` caveat has partly lifted: findings now rest on **four
+dumps across three physical radios**, in both factory and CPS-written codeplug
+states. Still one firmware (`1.0.0.0`).
 
 Supporting artifacts, all in this repo:
 
@@ -44,30 +41,67 @@ Supporting artifacts, all in this repo:
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_WRITE_DUMP.txt` — CPS write
 - `cps/cps_serial_dumps/P4_OEM_FAMILYPLAN_CPS_READAFTERWRITE_DUMP.txt` — readback
 - `p64tool_dumps/p64tool_baseline_factory_20260812/` — live p64tool read
-- `p64tool_dumps/p64tool_red_familycpd_20260816/` — live read whose `r08` is
-  byte-identical to `cps/cps_saves/retevis_matetalk_p4_familywcpd_red.dat`,
-  which is what grounds findings 4–6
+  (🔴 misnamed: this is family state, not factory)
+- `p64tool_dumps/p64tool_purple_20260813/` — live p64tool read, genuine factory
+  default
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_factory_20260813.dat` — OEM
+  CPS export of **that same radio**, three hours later, with the operator's CPS
+  screens transcribed alongside. This is what makes findings 6 and 7 possible:
+  it is the only place we can see a decoded field and the radio's bytes side by
+  side and check that p64tool agrees with the vendor.
+- `cps/cps_saves/retevis_matetalkp4_oem_cps_baseline_low682sn_20260813.dat` — the
+  same radio again with three deliberate edits (one channel to Low power, DMR ID
+  682, real Serial No). The differential that settled finding 6.
+
+---
+
+**Fork status.** Every finding below is implemented on our fork's
+`feat/p4-support` / `feat/p4-roundtrip-fidelity` branches, so this is the
+evidence base for a PR rather than a list of open questions.
+
+| # | Finding | Kind | Status |
+|---|---|---|---|
+| 1 | `0x44` write ACKs with `0x54` | doc | valid, docs-only |
+| 2 | `REGIONS` omits regions the CPS touches | correctness | **STALE — do not file** |
+| 3 | First connect after idle returns 0 bytes | robustness | valid, retry in `proto.rs` |
+| 4 | Channel TX power bits documented inverted | field map | fixed (`0272d3e`) |
+| 5 | Scan list member array starts at 60, not 58 | field map | fixed (`0272d3e`) |
+| 6 | Bandwidth is a 2-bit field read as 1 bit | field map | fixed (`201aab5`) |
+| 7 | `roundtrip` not byte-faithful on any P4 dump | correctness | fixed (`feat/p4-roundtrip-fidelity`) |
+| 8 | Short region read written to disk with only a warning | robustness | open |
+| 9 | Region table `Size` column is frame length | doc | open |
+
+Findings 4–6 are field-map corrections and the strongest of the set: each is
+checkable against the CPS UI rather than inferred from a capture.
 
 ---
 
 ## Before filing
 
-- [ ] **Second radio.** Ideally a different firmware, at minimum a second unit.
-      Everything here is `n=1`.
+- [x] **Second radio.** Now four dumps across three physical units, in both
+      factory and CPS-written codeplug states.
 - [ ] **Confirm finding 3 is not our cable/driver.** It reproduced on macOS with
       a Prolific PL2303G. Untested on Linux and on a CH340. If it is
       macOS/PL2303G-specific, finding 3 is not an upstream issue at all — it
       belongs in our own notes.
-- [ ] **Exercise the write path** on a radio we can afford to recover, to check
-      whether the missing regions actually matter in practice. Finding 2's
-      severity is currently inferred, not observed.
-- [ ] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main` and
-      confirm these gaps still exist and weren't fixed since our clone.
+- [x] **Exercise the write path** on a radio we can afford to recover. Done on
+      `p4_02` (yellow), 2026-08-13: identity write, control, and a one-field
+      modifying write, then restored byte-for-byte. See
+      `p64tool_dumps/p64tool_yellow_20260813/NOTES.md`.
+- [x] Re-read the current `PROTOCOL.md` and `REGIONS` on upstream `main`.
+      Done — finding 2 is stale, finding 1 is docs-only.
+- [x] **Settle finding 6 before filing it.** Done — one channel set to Low in the
+      CPS, saved, and diffed against the factory save. It refuted the mask this
+      draft proposed and produced the real answer (inverted polarity), which is
+      the argument for keeping this checklist item on future findings.
+
+
+---
 - [ ] Confirm the CPS version dependency for findings 4–6. Ours is CPS v1.5;
       p64tool was reverse engineered against v1.4. The offsets came from `.dat`
       payloads, which equal the region bytes, so they apply — but the *labels*
       came from the v1.5 UI.
-- [ ] Observe bandwidth value 1 (20 kHz) on hardware. Findings 6's 12.5 and
+- [ ] Observe bandwidth value 1 (20 kHz) on hardware. Finding 6's 12.5 and
       25 kHz mappings are confirmed; 20 kHz is inferred from the field being two
       bits wide and has not been round-tripped through the CPS.
 - [ ] Decide on one PR versus several issues. Findings 1 and 4–6 are clean
@@ -122,9 +156,19 @@ ahead of the payload proper.
 
 ---
 
-## Finding 2 — `REGIONS` omits 5 regions the CPS touches, 2 of which it writes
+---
 
-**Confidence: high on the observation, unverified on the consequence.**
+## Finding 2 — ~~`REGIONS` omits 5 regions the CPS touches~~ STALE, DO NOT FILE
+
+**Re-checked 2026-08-13 against upstream `main`: the gap does not exist.**
+
+Upstream `REGIONS` covers all 13 regions the CPS reads. `00 01` and `01 01` are
+there as `rKL` and `rML`, both in the write order too, and `rML` is documented
+as the quick-text message table (32 × 516 @16). The 54-byte `op=0x00` preamble
+is upstream's MCU-GET (`0x32`) identity probe, also implemented.
+
+Our clone predated that work. The observation below is retained only as a record
+of region sizes; **the conclusion drawn from it was wrong.**
 
 The CPS reads 13 regions and writes 11. p64tool's `REGIONS` table covers 9 reads.
 Not present in `REGIONS`:
@@ -154,9 +198,14 @@ matches p64tool's existing note.
 
 ---
 
+---
+
 ## Finding 3 — first connect after idle returns 0 bytes
 
-**Confidence: LOWEST of the three. Do not file until the checklist above is done.**
+**Confidence: raised. Reproduced on a third radio on 2026-08-13**, where it was
+strikingly consistent: `info`, `read`, and a verification `read` each failed on
+attempt 1 with 0 bytes and succeeded on attempt 2. Still macOS/PL2303G only, so
+the cable/driver question below is still open.
 
 The first `CONNECT` after the port has been idle returns 0 bytes. An immediate
 retry succeeds, and the link is then stable across many operations.
@@ -198,6 +247,8 @@ in an upstream issue.
 
 ---
 
+---
+
 ## Finding 4 — channel TX power bits are documented inverted
 
 **Confidence: high.** Checked against the CPS display for a codeplug written to
@@ -223,6 +274,8 @@ This also changes the reading of a stock codeplug: the factory default is byte 3
 A decoder using the documented mapping reports every channel's power backwards,
 which is a safety-relevant misread — it understates transmit power on channels a
 user may have deliberately set low.
+
+---
 
 ---
 
@@ -262,6 +315,8 @@ Consequences for a decoder following the docs:
 
 Capacity is 15 real members if the record ends at 89, not the documented 16. Our
 largest observed list has 11, so we cannot confirm the cap empirically.
+
+---
 
 ---
 
@@ -315,9 +370,160 @@ stored bytes describe the same 18 channel records.
 
 ---
 
-## Related local gotcha — not upstream's problem
+---
 
-Recording it here so it doesn't get mistaken for a p64tool bug later.
+## Finding 7 — `roundtrip` was not byte-faithful on any P4 codeplug — FIXED
+
+**Confidence: high. Reproduced on four dumps, three radios, then fixed and
+re-verified.** This is the one that actually mattered.
+
+p64tool's `roundtrip` self-test (decode → re-apply → diff) is the repo's own
+stated precondition for trusting the write path. It **failed on every P4 dump in
+this repo**: 171 differing bytes, at identical offsets across all three, in
+regions `r02`, `r08` and `rML`.
+
+Four independent decode/apply asymmetries, none P4-specific in principle — they
+were simply never exercised by the P64 V1.1 sample the field map came from:
+
+1. **Blank-record fill is not a constant** (124 of the 171 bytes). p64tool
+   assumed unused `rML` message slots are `0x00`-filled. That holds on a
+   factory-fresh radio and is **false on every radio the OEM CPS has written**,
+   where they are `0xFF`. On those, decode emitted 32 empty quick-text messages
+   and re-apply stamped a record number into 31 slots that should not have been
+   touched.
+2. **Empty names.** `set_name` wrote a `0x0000` terminator into a name field the
+   radio leaves entirely `0xFF`-filled. Programmed-but-unnamed channels are
+   common here, so this fired repeatedly.
+3. **Channel encryption key slot.** `rec[62]` was zeroed whenever the enable bit
+   was clear, discarding the radio's retained last-selected key.
+4. **Password sentinel `r02[24]`.** Rewritten unconditionally to `0xF8`, which
+   is the factory value; a CPS-written radio holds `0x8F`. Both mean "disabled".
+
+Fixed on branch `feat/p4-roundtrip-fidelity`: preserve an already-blank record
+whatever its fill, recognise both fills on decode, keep the stored key slot, and
+only rewrite the password byte when the state actually changes. All four dumps
+now report `Roundtrip OK`, and the upstream test suite still passes.
+
+**Status 2026-08-13:** fixed and now carried on
+`Chicago-Offline/p64tool` branch `feat/p4-support`, together with the connect
+retry (finding 3), a short-read guard (finding 5), the `PROTOCOL.md` refresh
+(finding 1), and a change that stops p64tool writing `r32`/`rFF`. `roundtrip` is
+byte-faithful on all six dumps, and the write path has since been proven on
+hardware.
+
+**Filing note:** this is a fix, not a bug report — send the branch as a PR rather
+than an issue.
+
+---
+
+---
+
+## Finding 8 — a short region read is written to disk with only a warning
+
+**Confidence: medium. Observed once, mechanism clear.**
+
+One read during the 2026-08-13 session returned `r08` as **5,869 bytes instead
+of 18,451** and `rFF` as **1 byte**. p64tool flagged it (`header_ok=NO` in
+`manifest.txt`, plus a closing `WARNING:` line) but still wrote the dump
+directory and a truncated `codeplug_raw.bin`.
+
+That is a hazard rather than a cosmetic issue: a truncated dump is a valid input
+to `--from-dump`, so a short read can silently become the base image for a
+write. `read_response` stops on a 250 ms inter-byte gap, so a mid-transfer pause
+ends the region early.
+
+Suggested: make a short region a hard error by default, or refuse to load a dump
+whose manifest has any `header_ok=NO`.
+
+---
+
+---
+
+## Finding 9 — the region table's `Size` column is frame length, not payload length
+
+**Confidence: high. Docs-only, trivial, but it propagates. Still open on
+`feat/p4-support` as of `0272d3e`.**
+
+`docs/codeplug-format.md` says of the region table: *"'Size' is the payload
+length `N`"*. The listed values are frame lengths. Measured on all 13 purple
+regions:
+
+```
+file_size == 18 + payload_len          # 14-byte header + payload + 4-byte trailer
+payload_len == u16le(rNN.bin[12..14])  # the header's own length field
+```
+
+So `r03` is listed as 51 and its payload is 33; `r08` is listed as 18,451 and its
+payload is 18,433. The distinction matters as soon as anything is written to a
+region boundary — we hit it decoding a CPS `.dat` record that turned out to
+overrun the `r03` payload by two bytes and match anyway, because the frame
+trailer begins `FF FF` and is indistinguishable from padding.
+
+Suggested: relabel the column `Frame` and add a `Payload` column, or state the
+`18 + N` relationship next to the table.
+
+---
+
+---
+
+## Finding 10 — channel power was decoded backwards — FIXED
+
+> Same defect as **Finding 4** above, which states the corrected mapping. This
+> entry is retained because the *route* to it — a wrong first hypothesis,
+> refuted by a differential CPS save — is the more useful half.
+
+**Confidence: high. Settled by a differential CPS save, then fixed.** 🔴 **Our
+first proposed fix was wrong** — see below, it is the more useful half of this
+entry.
+
+`docs/codeplug-format.md` mapped channel record byte 33 as:
+
+> `&0x03` power (0=low, 2=high); `&0x30>>4` TX-admit criteria; `&0x40` RX-only.
+> **A** also: `&0x0C` bandwidth/spacing
+
+On the factory-default codeplug byte 33 is `0x80` on all 32 channels, so `&0x03`
+is `0` and p64tool reported **Low**. The OEM CPS shows **High** for all 32.
+
+Setting one channel to Low in the CPS and saving moved exactly that byte:
+
+```
+08CH09[33]   0x80  ->  0x82        ACH 1, High -> Low
+```
+
+**The mask was right; the polarity was inverted.** Bits `[1:0]` are
+`0 = high, 2 = low`. Every P4 decode before the fix reported power backwards, and
+writing such a config back would have flipped it on the radio. Reads were
+unaffected — byte 33 round-trips verbatim — which is why `roundtrip` never
+caught it.
+
+Fixed in `Chicago-Offline/p64tool` `feat/p4-support` (`0272d3e`), with the
+mapping in `power_from_bits`/`power_to_bits` so decode, apply and the regression
+test share one definition. `0x80` is now documented as set on every observed
+record, meaning unknown.
+
+### 🔴 What we got wrong, and why it is worth recording
+
+This document originally proposed `(b33 & 0xC0) >> 6`. The argument: `&0x03` is
+never set on any channel in any dump, `0x80` always is, and `0x80 >> 6` equals
+`2` — the value already documented as "high". A bit that was always set got read
+as the field that was always High.
+
+Every step was true and the conclusion was still wrong, because **the sample had
+no variation in the thing being measured.** All 32 channels were High, so any
+constant in the record could be made to explain the output. That is
+curve-fitting to a single point. The tell, in hindsight, was that the hypothesis
+required the vendor to have chosen an odd encoding while a simpler one sat right
+there.
+
+It cost one CPS edit and a save to find out. **When a hypothesis rests on a
+constant, get a second value before writing it down** — and certainly before
+filing it upstream, which the checklist happily prevented here.
+
+**Filing note:** fixed, not a report. Goes upstream with the branch.
+
+---
+
+## Related local gotcha — not upstream's problem
 
 On macOS the Prolific PL2303G DriverKit extension must be **enabled** under
 System Settings → General → Login Items & Extensions → **Driver Extensions**. A
